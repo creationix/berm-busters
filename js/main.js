@@ -10,7 +10,7 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-10.5';
+const BUILD = '2026-11-10.6';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -187,7 +187,8 @@ function handleEvent(e, race) {
     }
     case 'respawn': sound.respawn(); hud.racer._snap = true; break;
     case 'lap': { const final = e.lap === race.laps; sound.lap(final); if (final) sound.setFinalLap(true); say(hud, final ? 'FINAL LAP!' : 'LAP ' + e.lap, final ? 'gold' : '', 1.3); break; }
-    case 'finish': sound.finish(e.place); say(hud, e.place + ORD(e.place) + '!', 'gold', 2.6); hud.view.orbit = true; break;
+    // the race tune ends at the line; the fanfare plays over silence
+    case 'finish': sound.stopMusic(); sound.finish(e.place); say(hud, e.place + ORD(e.place) + '!', 'gold', 2.6); hud.view.orbit = true; break;
   }
 }
 
@@ -284,6 +285,7 @@ function showResults() {
   $('hatchBtn').style.display = '';
   for (const h of G.huds) h.el.style.display = 'none';
   show('results');
+  sound.startMusic('den');             // a gentle tune for results, hatching and the Den
 }
 
 // ---------- hatching and the Den ----------
@@ -343,8 +345,11 @@ $('denCards').addEventListener('click', e => {
   const card = e.target.closest('.card.found'); if (!card) return;
   den.buddy = card.dataset.id; saveDen(den); sound.click(); showDen(G.denFrom);
 });
-$('denBtn').addEventListener('click', () => { sound.unlock(); sound.click(); showDen('menu'); });
-$('denBackBtn').addEventListener('click', () => { sound.click(); show(G.denFrom === 'hatch' ? 'hatch' : 'menu'); });
+$('denBtn').addEventListener('click', () => { sound.unlock(); sound.click(); showDen('menu'); sound.startMusic('den'); });
+$('denBackBtn').addEventListener('click', () => {
+  sound.click();
+  if (G.denFrom === 'hatch') show('hatch'); else { show('menu'); sound.stopMusic(); }
+});
 $('hatchBtn').addEventListener('click', () => { sound.click(); showHatch(); });
 $('hatchAgainBtn').addEventListener('click', () => { sound.click(); startRace(); });
 $('hatchDenBtn').addEventListener('click', () => { sound.click(); showDen('hatch'); });

@@ -28,7 +28,10 @@ export class Sound {
     } catch (e) {}
   }
   setSfx(on) { this.sfxOn = on; if (this.sfx) this.sfx.gain.value = on ? 0.5 : 0; }
-  setMusic(on) { this.musicOn = on; if (this.music) this.music.gain.value = on ? 0.15 : 0; }
+  setMusic(on) {
+    this.musicOn = on;
+    if (this.music) { const t = this.ctx.currentTime; this.music.gain.cancelScheduledValues(t); this.music.gain.setTargetAtTime(on && this.tune ? MUSIC_LEVEL[this.tune] : 0, t, 0.03); }
+  }
 
   tone(freq, dur, o = {}) {
     if (!this.ctx || !(o.music ? this.musicOn : this.sfxOn)) return;
@@ -108,26 +111,39 @@ export class Sound {
     n.g.gain.setTargetAtTime(on ? 0.05 + k * 0.05 : 0, t, 0.1);
   }
 
-  // ----- music: a fast, scrappy race tune -----
-  // Four-on-the-floor kick, snare on 2 and 4, a galloping bass and a cheeky lead riff in E minor.
-  // The lead is a square wave through a low-pass filter, so it has bite without being harsh.
-  startMusic() {
-    if (!this.ctx || this.musicTimer) return;
+  // ----- music -----
+  // Two tunes: 'race' is fast and scrappy (four-on-the-floor kick, snare on 2 and 4, a galloping
+  // bass and a cheeky lead riff in E minor; the lead is a square wave through a low-pass filter,
+  // so it has bite without being harsh). 'den' is a gentle music-box tune for the results,
+  // hatching and Den screens. Starting one stops the other.
+  startMusic(tune = 'race') {
+    if (!this.ctx) return;
+    if (this.musicTimer && this.tune === tune) return;
+    this.stopMusic();
+    this.tune = tune;
+    // A short silence between tunes, so notes already queued from the old one are not heard under the new one.
+    const now = this.ctx.currentTime, gap = 0.4;
+    this.music.gain.setTargetAtTime(this.musicOn ? MUSIC_LEVEL[tune] : 0, now + gap - 0.06, 0.02);
     if (!this.leadBus) {
       this.leadBus = this.ctx.createBiquadFilter(); this.leadBus.type = 'lowpass'; this.leadBus.frequency.value = 2300; this.leadBus.Q.value = 0.8;
       this.leadBus.connect(this.music);
       this.bassBus = this.ctx.createBiquadFilter(); this.bassBus.type = 'lowpass'; this.bassBus.frequency.value = 620;
       this.bassBus.connect(this.music);
     }
-    this.step = 0; this.fast = false; this.nextTime = this.ctx.currentTime + 0.1;
+    this.step = 0; this.fast = false; this.nextTime = now + gap;
     this.musicTimer = setInterval(() => this.schedule(), 80);
   }
-  stopMusic() { clearInterval(this.musicTimer); this.musicTimer = null; }
-  // Final lap: the tune speeds up.
+  // Stops at once: the music is faded out in a few hundredths of a second, cutting off queued notes too.
+  stopMusic() {
+    clearInterval(this.musicTimer); this.musicTimer = null; this.tune = null; this.fast = false;
+    if (this.music) { const t = this.ctx.currentTime; this.music.gain.cancelScheduledValues(t); this.music.gain.setTargetAtTime(0, t, 0.03); }
+  }
+  // Final lap: the race tune speeds up.
   setFinalLap(on) { this.fast = on; }
   schedule() {
     if (!this.ctx || this.ctx.state !== 'running') return;
     if (this.nextTime < this.ctx.currentTime) this.nextTime = this.ctx.currentTime + 0.05;
+    if (this.tune === 'den') return this.scheduleDen();
     while (this.nextTime < this.ctx.currentTime + 0.3) {
       const S = 60 / (this.fast ? 172 : 154) / 4;                // one sixteenth note
       const t = this.nextTime, i = this.step % 16;
@@ -153,10 +169,32 @@ export class Sound {
       this.nextTime += S; this.step++;
     }
   }
+  // The Den tune: slow, no drums, soft sine notes like a music box, with a low hum underneath.
+  scheduleDen() {
+    const S = 60 / 92 / 2;                                        // eighth notes at 92 bpm
+    while (this.nextTime < this.ctx.currentTime + 0.3) {
+      const i = this.step % DEN_LEAD.length, t = this.nextTime, n = DEN_LEAD[i];
+      if (n != null) {
+        this.tone(NOTE(n + 12), S * 3.2, { music: true, vol: 0.5, at: t, attack: 0.004 });
+        this.tone(NOTE(n + 24), S * 1.4, { music: true, vol: 0.12, at: t, attack: 0.004 });
+      }
+      if (i % 4 === 0) this.tone(NOTE(DEN_BASS[Math.floor(i / 4) % DEN_BASS.length] - 12), S * 4.2, { music: true, type: 'triangle', vol: 0.4, at: t, attack: 0.05 });
+      this.nextTime += S; this.step++;
+    }
+  }
 }
+
+const MUSIC_LEVEL = { race: 0.15, den: 0.1 };
 
 // Sixteen steps per bar. Lead notes are semitones above middle C; null is a rest.
 const _ = null;
+const DEN_LEAD = [
+  12, _, 16, 19, _, 16, 21, 19, 16, _, 12, 14, 16, _, 14, _,
+  12, _, 16, 19, _, 24, 21, 19, 21, _, 19, 16, 14, _, 12, _,
+  9, _, 12, 16, _, 12, 19, 16, 14, _, 9, 12, 14, _, 12, _,
+  7, _, 12, 14, _, 16, 19, 21, 24, _, 21, 19, 16, 14, 12, _,
+];
+const DEN_BASS = [0, 0, -3, -3, -8, -8, -5, -5];                  // one per half bar: C C A A F F G G
 const BASS = [0, _, 0, 0, 12, _, 0, _, 0, _, 0, 0, 12, _, 7, _];
 const A = [
   { root: -20, lead: [16, _, 16, 19, _, 16, _, 11, 14, _, 16, _, 19, 21, _, _] },            // E minor
