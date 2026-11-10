@@ -9,7 +9,7 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-10.3';
+const BUILD = '2026-11-10.4';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -51,7 +51,8 @@ function startRace() {
   const me = characterById(settings.character);
   const entries = [{ name: me.name, character: me.id, human: true, daredevil: settings.daredevil === 'on', assist: ASSIST[settings.assist], autoGo: settings.autoGo === 'on' }];
   others.forEach((c, i) => entries.push({ name: c.name, character: c.id, human: false, skill: base + i * stepUp }));
-  G.race = new Race(track, entries, { seed: (Date.now() & 0xffff) + 1 });
+  // On Easy the computer riders only bash each other, never the player.
+  G.race = new Race(track, entries, { seed: (Date.now() & 0xffff) + 1, aiBashHumans: { easy: 0, normal: 0.45, fast: 1.2 }[settings.rivals] || 0 });
   world.clearRacers(); for (const r of G.race.racers) world.addRacer(r);
   G.human = 0;
   const view = world.makeView(0);
@@ -64,6 +65,7 @@ function startRace() {
   G.inputs = [new PlayerInput({ keyboard, scheme: 'both', gamepad: 'any', touch: hud.pad, tilt: useTilt ? tilt : null })];
   G.mode = 'race'; G.acc = 0;
   show(null);
+  sound.setFinalLap(false);
   sound.startMusic();
   if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
 }
@@ -76,20 +78,21 @@ function makeHud(view, racer) {
   const r = view.rect;
   el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
   el.innerHTML = `<div class="flash"></div>
-    <div class="place"></div><div class="lap"></div><canvas class="map" width="150" height="150"></canvas>
+    <div class="place"></div><div class="kos"></div><div class="lap"></div><canvas class="map" width="150" height="150"></canvas>
     <div class="msg"></div><button class="pauseBtn" aria-label="Pause">❚❚</button>
     <div class="tiltDot"><i></i></div>
     <div class="touch l"><button data-touch="left" aria-label="Steer left">◀</button><button data-touch="right" aria-label="Steer right">▶</button></div>
-    <div class="touch r">${racer.autoGo ? '' : '<button class="go" data-touch="go">GO</button>'}<button class="brake" data-touch="brake">BRAKE</button></div>`;
+    <div class="touch r">${racer.autoGo ? '' : '<button class="go" data-touch="go">GO</button>'}<button class="brake" data-touch="brake">BRAKE</button><button class="bash" data-touch="bash">BASH</button></div>`;
   $('huds').appendChild(el);
   const q = s => el.querySelector(s);
-  const hud = { el, view, racer, place: q('.place'), lap: q('.lap'), map: q('.map'), msg: q('.msg'), flash: q('.flash'), tiltDot: q('.tiltDot i'), pad: new TouchPad(el), lastPlace: '', lastLap: '', wasAir: false };
+  const hud = { el, view, racer, place: q('.place'), lap: q('.lap'), map: q('.map'), msg: q('.msg'), flash: q('.flash'), tiltDot: q('.tiltDot i'), pad: new TouchPad(el), lastPlace: '', lastLap: '', wasAir: false,
+    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null };
   q('.pauseBtn').addEventListener('click', () => pause());
   return hud;
 }
 function say(hud, text, cls = '', dur = 1.1) {
   const m = hud.msg;
-  m.className = 'msg ' + cls; m.textContent = text; m.style.setProperty('--dur', dur + 's');
+  m.className = 'msg ' + cls + (text.length > 9 ? ' long' : ''); m.textContent = text; m.style.setProperty('--dur', dur + 's');
   void m.offsetWidth; m.classList.add('pop');
 }
 const ORD = n => ['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)];
@@ -130,6 +133,8 @@ function updateHud(hud, race) {
   const txt = lap + time;
   if (txt !== hud.lastLap) { hud.lastLap = txt; hud.lap.innerHTML = `${lap}<small>${time}</small>`; }
   hud.flash.classList.toggle('on', r.boostT > 0);
+  if (r.kos !== hud.lastKos) { hud.lastKos = r.kos; hud.kos.textContent = r.kos ? '💥 × ' + r.kos : ''; }
+  hud.bashBtn.classList.toggle('cool', r.bashT > 0);
   if (tilt.active) hud.tiltDot.style.left = (50 + tilt.steer * 50) + '%';
   if (G.frame % 3 === 0) drawMap(hud, race);
 }
@@ -149,10 +154,13 @@ function handleEvent(e, race) {
     case 'bump': sound.bump(); break;
     case 'scrape': sound.scrape(); break;
     case 'shield': sound.shield(); break;
-    case 'fall': sound.fall(); break;
-    case 'explode': sound.explode(); say(hud, 'BOOM!', 'red', 1.2); break;
+    case 'bash': sound.bash(); break;
+    case 'knocked': sound.knocked(); say(hud, 'WHOA!', 'red', 0.7); break;
+    case 'knockout': sound.knockout(); say(hud, 'KNOCKOUT!', 'gold', 1.2); break;
+    case 'fall': sound.fall(); hud.gotBy = e.by >= 0 ? race.racers[e.by].name : null; break;
+    case 'explode': sound.explode(); say(hud, hud.gotBy ? hud.gotBy + ' got you!' : 'BOOM!', 'red', 1.5); hud.gotBy = null; break;
     case 'respawn': sound.respawn(); hud.racer._snap = true; break;
-    case 'lap': { const final = e.lap === race.laps; sound.lap(final); say(hud, final ? 'FINAL LAP!' : 'LAP ' + e.lap, final ? 'gold' : '', 1.3); break; }
+    case 'lap': { const final = e.lap === race.laps; sound.lap(final); if (final) sound.setFinalLap(true); say(hud, final ? 'FINAL LAP!' : 'LAP ' + e.lap, final ? 'gold' : '', 1.3); break; }
     case 'finish': sound.finish(e.place); say(hud, e.place + ORD(e.place) + '!', 'gold', 2.6); hud.view.orbit = true; break;
   }
 }
@@ -226,9 +234,16 @@ function showResults() {
   $('resultsTitle').textContent = me.place === 1 ? 'You won!' : me.place <= 3 ? `${me.place}${ORD(me.place)} place!` : `You finished ${me.place}${ORD(me.place)}`;
   const rows = race.racers.slice().sort((a, b) => a.place - b.place).map(r => {
     const ch = characterById(r.character);
-    return `<tr class="${r === me ? 'me' : ''}"><td class="p">${r.place}${ORD(r.place)}</td><td><img src="${portraits[ch.id]}" alt=""></td><td>${ch.name}${r === me ? ' (you)' : ''}</td><td>${r.finishTime ? fmtTime(r.finishTime) : ''}</td></tr>`;
+    return `<tr class="${r === me ? 'me' : ''}"><td class="p">${r.place}${ORD(r.place)}</td><td><img src="${portraits[ch.id]}" alt=""></td><td>${ch.name}${r === me ? ' (you)' : ''}</td><td>${r.finishTime ? fmtTime(r.finishTime) : ''}</td><td>${r.kos ? '💥 × ' + r.kos : ''}</td></tr>`;
   });
   $('resultsTable').innerHTML = rows.join('');
+  // Who got whom: the stuff people argue about afterwards.
+  let nemesis = null, most = 0;
+  for (const k in me.koBy) if (me.koBy[k] > most) { most = me.koBy[k]; nemesis = race.racers[k]; }
+  const bits = [];
+  if (me.kos) bits.push(`You knocked ${me.kos} rider${me.kos === 1 ? '' : 's'} off the trail`);
+  if (nemesis) bits.push(`${nemesis.name} knocked you off ${most === 1 ? 'once' : most + ' times'}`);
+  $('resultsNote').textContent = bits.join(' · ');
   for (const h of G.huds) h.el.style.display = 'none';
   show('results');
 }

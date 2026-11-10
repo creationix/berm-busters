@@ -15,6 +15,10 @@ const BOOST_TIME = 1.3, BOOST_GAIN = 1.32;
 const FALL_TIME = 1.0, RESPAWN_DELAY = 1.5, INVULN_TIME = 2.0;
 const SAFE_MARGIN = 0.9;          // safety field keeps protected riders this far inside the edge
 const ROUGH_WIDTH = 5;            // how far Daredevils can stray into the forest
+const BASH_COOLDOWN = 2.2;        // seconds between bashes
+const BASH_REACH_S = 3.6, BASH_REACH_D = 4.4;   // how close (along / across the trail) a ship must be to get shoved
+const KNOCK_SPEED = 11;           // sideways shove, m/s, fading over about half a second
+const KNOCK_TIME = 0.9;           // while shoved, nothing holds you on the trail: not even the safety field
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -42,6 +46,8 @@ export class Race {
     this.events = [];
     this.finishCount = 0;
     this.endTimer = -1;
+    // How often computer riders bash people (per second of opportunity). They always scrap among themselves.
+    this.aiBashHumans = opts.aiBashHumans != null ? opts.aiBashHumans : 0.5;
     const L = track.length;
     // Computer riders take the front rows so people get to overtake.
     const order = entries.map((e, i) => i).sort((a, b) => (entries[a].human ? 1 : 0) - (entries[b].human ? 1 : 0));
@@ -57,6 +63,7 @@ export class Race {
         boostT: 0, mode: 'drive', timer: 0, invuln: 0, offroad: false, safeS: s,
         steer: 0, throttle: 0, lane: (this.rng() - 0.5) * 0.9, laneT: 2 + this.rng() * 3,
         scrapeT: 0, bumpT: 0, shieldT: 0, shieldSide: 0, landT: 0,
+        bashT: 0, kv: 0, knockT: 0, knockedBy: -1, kos: 0, koBy: {}, wipeouts: 0, wantBash: false,
         wx: 0, wy: 0, wz: 0, wvx: 0, wvy: 0, wvz: 0, wpsi: 0, spin: 0,
       };
     });
@@ -65,7 +72,7 @@ export class Race {
 
   emit(type, r, extra) { this.events.push(Object.assign({ type, r: r ? r.index : -1 }, extra)); }
 
-  // inputs: array indexed by racer, each { steer, throttle, brake } (missing = no input).
+  // inputs: array indexed by racer, each { steer, throttle, brake, bash } (missing = no input).
   step(inputs = []) {
     this.events.length = 0;
     this.tick++;
@@ -136,7 +143,43 @@ export class Race {
     const speedF = clamp(r.v / 8, 0.3, 1);
     const steer = clamp(want / (W_MAX * speedF), -1, 1);
     const vCorner = (W_MAX * 0.85) / Math.max(Math.abs(kAhead), Math.abs(k), 1e-4);
-    return { steer, throttle: r.v > vCorner ? 0 : 1, brake: 0 };
+    return { steer, throttle: r.v > vCorner ? 0 : 1, brake: 0, bash: this.aiWantsBash(r, hw) };
+  }
+
+  // Computer riders bash when someone is alongside and close enough to an open edge to go over it.
+  aiWantsBash(r, hw) {
+    if (r.bashT > 0 || r.finished || r.invuln > 0 || this.time < 4) return false;
+    const t = this.track;
+    for (const o of this.racers) {
+      if (o === r || o.mode !== 'drive' || o.invuln > 0 || o.finished) continue;
+      const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
+      if (Math.abs(ds) > 2.8 || Math.abs(dd) < 0.6 || Math.abs(dd) > 3.6) continue;
+      const dir = dd > 0 ? 1 : -1;
+      if (t.edgeAt(o.s, dir) === EDGE.WALL || hw - dir * o.d > 3.4) continue;      // would not go over: save it
+      const rate = o.human ? this.aiBashHumans : 0.9;
+      if (this.rng() < rate * TICK) return true;
+    }
+    return false;
+  }
+
+  // A bash shoves every ship close by sideways, away from the basher.
+  bash(r) {
+    const t = this.track;
+    r.bashT = BASH_COOLDOWN;
+    let hits = 0;
+    for (const o of this.racers) {
+      if (o === r || o.mode !== 'drive' || o.invuln > 0) continue;
+      if (!r.human && o.human && this.aiBashHumans <= 0) continue;    // on Easy, people are never caught in a computer rider's bash
+      const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
+      if (Math.abs(ds) > BASH_REACH_S || Math.abs(dd) > BASH_REACH_D || Math.abs(o.y - r.y) > 2.2) continue;
+      const dir = dd > 0 ? 1 : dd < 0 ? -1 : (o.index > r.index ? 1 : -1);
+      o.kv = dir * KNOCK_SPEED; o.knockT = KNOCK_TIME; o.knockedBy = r.index;
+      o.th = clamp(o.th + dir * 0.22, -TH_MAX, TH_MAX); o.v *= 0.92;
+      r.kv -= dir * 2.5;                                                        // a little recoil
+      hits++;
+      this.emit('knocked', o, { by: r.index, side: dir });
+    }
+    this.emit('bash', r, { hits });
   }
 
   stepRacer(r, inp) {
@@ -160,17 +203,22 @@ export class Race {
     r.invuln = Math.max(0, r.invuln - dt);
     r.scrapeT = Math.max(0, r.scrapeT - dt); r.bumpT = Math.max(0, r.bumpT - dt);
     r.shieldT = Math.max(0, r.shieldT - dt); r.landT = Math.max(0, r.landT - dt);
+    r.bashT = Math.max(0, r.bashT - dt); r.knockT = Math.max(0, r.knockT - dt);
+    if (r.knockT <= 0) r.knockedBy = -1;
 
-    let steer = 0, throttle = 0, brake = 0;
-    if (!r.human || r.finished) ({ steer, throttle, brake } = this.ai(r));
+    let steer = 0, throttle = 0, brake = 0, bash = false;
+    if (!r.human || r.finished) ({ steer, throttle, brake, bash } = this.ai(r));
     else if (inp) {
+      bash = !!inp.bash;
       steer = clamp(inp.steer || 0, -1, 1);
       brake = clamp(inp.brake || 0, 0, 1);
       throttle = r.autoGo ? 1 : clamp(inp.throttle || 0, 0, 1);
       if (brake > 0.1) throttle = 0;
     } else if (r.autoGo) throttle = 1;
+    if (r.knockT > 0) steer *= 0.35;                 // hard to steer while reeling from a shove
     r.steer += (steer - r.steer) * 0.3;
     r.throttle = throttle;
+    if (bash && r.bashT <= 0 && r.invuln <= 0) this.bash(r);
 
     const k = t.kappaAt(r.s), hw = t.halfWidthAt(r.s);
 
@@ -212,7 +260,8 @@ export class Race {
     const groundBefore = t.heightAt(r.s);
     const sdot = r.v * Math.cos(r.va) / Math.max(0.3, 1 - r.d * k);
     r.s += sdot * dt;
-    r.d += r.v * Math.sin(r.va) * dt;
+    r.d += r.v * Math.sin(r.va) * dt + r.kv * dt;
+    r.kv *= Math.exp(-4 * dt);
     if (r.s >= L) {
       r.s -= L; r.lapsDone++;
       if (r.lapsDone >= this.laps && !r.finished) {
@@ -248,7 +297,10 @@ export class Race {
     const side = r.d < 0 ? -1 : 1;
     const edge = t.edgeAt(r.s, side);
     const ad = Math.abs(r.d);
-    if (!r.daredevil) {
+    if (r.knockT > 0 && edge !== EDGE.WALL && r.kv * side > 0.5) {
+      // Shoved toward an open edge: nothing holds you. Over the edge means a wipeout for anyone.
+      if (ad > hw + 0.2) { this.knockout(r, side, edge); return; }
+    } else if (!r.daredevil) {
       if (ad > hw - SAFE_MARGIN) this.slide(r, side, hw - SAFE_MARGIN, 0.994, edge !== EDGE.WALL);
     } else if (edge === EDGE.WALL) {
       if (ad > hw - 0.7) this.slide(r, side, hw - 0.7, 0.985, false);
@@ -274,18 +326,28 @@ export class Race {
     if (r.scrapeT <= 0) { r.scrapeT = 0.25; this.emit(shield ? 'shield' : 'scrape', r, { side }); }
   }
 
-  startFall(r, side) {
+  // punted: knocked off by a bash, so they are flung up and out rather than just dropping.
+  startFall(r, side, punted = false, cliff = true) {
     const t = this.track;
     const w = t.toWorld(r.s, r.d);
     const h = w.psi + r.va;
     r.wx = w.x; r.wz = w.z; r.wy = Math.max(r.y, w.y);
-    r.wvx = Math.cos(h) * r.v - Math.sin(w.psi) * side * 3;
-    r.wvz = Math.sin(h) * r.v + Math.cos(w.psi) * side * 3;
-    r.wvy = Math.min(r.vy, 2);
+    const out = punted ? 9 : 3;
+    r.wvx = Math.cos(h) * r.v * (punted ? 0.7 : 1) - Math.sin(w.psi) * side * out;
+    r.wvz = Math.sin(h) * r.v * (punted ? 0.7 : 1) + Math.cos(w.psi) * side * out;
+    r.wvy = punted ? 8 : Math.min(r.vy, 2);
     r.wpsi = w.psi + r.th; r.spin = 0;
     r.fallFloor = r.wy - 14;
-    r.mode = 'fall'; r.timer = FALL_TIME; r.air = false; r.boostT = 0;
-    this.emit('fall', r);
+    r.mode = 'fall'; r.timer = punted && !cliff ? 0.72 : punted ? 1.25 : FALL_TIME; r.air = false; r.boostT = 0; r.kv = 0; r.knockT = 0;
+    this.emit('fall', r, { by: punted ? r.knockedBy : -1 });
+  }
+
+  // Knocked clean off the trail by another rider.
+  knockout(r, side, edge) {
+    const by = this.racers[r.knockedBy];
+    if (by) { by.kos++; r.koBy[by.index] = (r.koBy[by.index] || 0) + 1; this.emit('knockout', by, { victim: r.index }); }
+    r.wipeouts++; r.revenge = true;
+    this.startFall(r, side, true, edge === EDGE.CLIFF);
   }
 
   respawn(r) {
@@ -295,6 +357,8 @@ export class Race {
     r.y = t.heightAt(r.s);
     r.progress = r.lapsDone * t.length + r.s;
     r.mode = 'drive'; r.invuln = INVULN_TIME; r.offroad = false;
+    r.kv = 0; r.knockT = 0; r.knockedBy = -1;
+    if (r.revenge) { r.revenge = false; r.v = 14; r.boostT = 1.6; }   // knocked off: come back with a boost
     this.emit('respawn', r);
   }
 
@@ -349,6 +413,7 @@ export class Race {
     const slope = (t.heightAt(s + 1.2) - t.heightAt(s - 1.2)) / 2.4;
     out.pitch = r.air ? Math.atan2(r.vy, Math.max(8, r.v)) * 0.7 : Math.atan(slope);
     out.roll = (r.air ? 0 : bank) + steer * 0.32;
+    if (r.knockT > 0) out.roll += Math.sin(r.knockT * 22) * 0.55 * r.knockT;   // wobble while reeling from a shove
     out.visible = true;
     return out;
   }

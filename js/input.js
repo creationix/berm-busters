@@ -1,4 +1,4 @@
-// One input shape for every way of playing: { steer -1..1, throttle 0..1, brake 0..1 }.
+// One input shape for every way of playing: { steer -1..1, throttle 0..1, brake 0..1, bash }.
 // Sources: keyboard, gamepads, on-screen touch buttons and tilt. A PlayerInput merges
 // whichever sources it has been given, so one player can use several at once and
 // several players can each have their own.
@@ -7,12 +7,13 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ---------- keyboard ----------
 const SCHEMES = {
-  arrows: { left: ['ArrowLeft'], right: ['ArrowRight'], go: ['ArrowUp'], brake: ['ArrowDown', 'Space'] },
-  wasd: { left: ['KeyA'], right: ['KeyD'], go: ['KeyW'], brake: ['KeyS', 'ShiftLeft'] },
+  arrows: { left: ['ArrowLeft'], right: ['ArrowRight'], go: ['ArrowUp'], brake: ['ArrowDown'], bash: ['Space', 'ShiftRight', 'Slash'] },
+  wasd: { left: ['KeyA'], right: ['KeyD'], go: ['KeyW'], brake: ['KeyS'], bash: ['ShiftLeft', 'KeyE', 'KeyQ'] },
 };
 SCHEMES.both = {
   left: [...SCHEMES.arrows.left, ...SCHEMES.wasd.left], right: [...SCHEMES.arrows.right, ...SCHEMES.wasd.right],
   go: [...SCHEMES.arrows.go, ...SCHEMES.wasd.go], brake: [...SCHEMES.arrows.brake, ...SCHEMES.wasd.brake],
+  bash: [...SCHEMES.arrows.bash, ...SCHEMES.wasd.bash],
 };
 
 export class Keyboard {
@@ -30,7 +31,7 @@ export class Keyboard {
   any(codes) { for (const c of codes) if (this.down.has(c)) return true; return false; }
   read(scheme) {
     const s = SCHEMES[scheme] || SCHEMES.both;
-    return { left: this.any(s.left), right: this.any(s.right), go: this.any(s.go), brake: this.any(s.brake) };
+    return { left: this.any(s.left), right: this.any(s.right), go: this.any(s.go), brake: this.any(s.brake), bash: this.any(s.bash) };
   }
 }
 
@@ -49,17 +50,18 @@ export function readGamepad(p) {
   x = Math.sign(x) * Math.pow(Math.abs(x), 1.4);                 // gentle near the centre
   if (btn(p, 14) > 0.5) x = -1; else if (btn(p, 15) > 0.5) x = 1;
   const go = Math.max(btn(p, 7), btn(p, 0));
-  const brake = Math.max(btn(p, 6), btn(p, 1), btn(p, 2));
+  const brake = Math.max(btn(p, 6), btn(p, 1));
+  const bash = btn(p, 2) > 0.5 || btn(p, 3) > 0.5 || btn(p, 5) > 0.5 || btn(p, 4) > 0.5;     // X, Y or either bumper
   let any = false; for (let i = 0; i < p.buttons.length; i++) if (btn(p, i) > 0.5) { any = true; break; }
-  return { steer: clamp(x, -1, 1), dpad: btn(p, 14) > 0.5 || btn(p, 15) > 0.5, go, brake, pause: btn(p, 9) > 0.5, any };
+  return { steer: clamp(x, -1, 1), dpad: btn(p, 14) > 0.5 || btn(p, 15) > 0.5, go, brake, bash, pause: btn(p, 9) > 0.5, any };
 }
 
 // ---------- touch buttons ----------
-// Buttons are any elements with data-touch="left|right|brake|go" inside the root.
+// Buttons are any elements with data-touch="left|right|brake|go|bash" inside the root.
 export class TouchPad {
   constructor(root) {
     this.root = root;
-    this.state = { left: false, right: false, brake: false, go: false };
+    this.state = { left: false, right: false, brake: false, go: false, bash: false };
     this.pointers = new Map();
     const down = e => {
       const el = e.target.closest('[data-touch]'); if (!el || !root.contains(el)) return;
@@ -91,25 +93,25 @@ export class PlayerInput {
   constructor(opts) {
     Object.assign(this, { keyboard: null, scheme: 'both', gamepad: null, touch: null, tilt: null }, opts);
     this.digital = 0;        // eased value of left/right buttons, so a tap is a small correction
-    this.out = { steer: 0, throttle: 0, brake: 0, pause: false };
+    this.out = { steer: 0, throttle: 0, brake: 0, bash: false, pause: false };
     this.pauseHeld = false;
   }
   read(dt) {
-    let left = false, right = false, go = 0, brake = 0, analog = 0, pause = false;
+    let left = false, right = false, go = 0, brake = 0, analog = 0, pause = false, bash = false;
     if (this.keyboard) {
       const k = this.keyboard.read(this.scheme);
-      left = left || k.left; right = right || k.right; if (k.go) go = 1; if (k.brake) brake = 1;
+      left = left || k.left; right = right || k.right; if (k.go) go = 1; if (k.brake) brake = 1; if (k.bash) bash = true;
     }
     if (this.touch) {
       const s = this.touch.state;
-      left = left || s.left; right = right || s.right; if (s.go) go = 1; if (s.brake) brake = 1;
+      left = left || s.left; right = right || s.right; if (s.go) go = 1; if (s.brake) brake = 1; if (s.bash) bash = true;
     }
     const pads = this.gamepad === 'any' ? listGamepads() : this.gamepad != null ? listGamepads().filter(p => p.index === this.gamepad) : [];
     for (const p of pads) {
       const g = readGamepad(p); if (!g) continue;
       if (g.dpad) { if (g.steer < 0) left = true; else right = true; }
       else if (Math.abs(g.steer) > Math.abs(analog)) analog = g.steer;
-      go = Math.max(go, g.go); brake = Math.max(brake, g.brake); pause = pause || g.pause;
+      go = Math.max(go, g.go); brake = Math.max(brake, g.brake); pause = pause || g.pause; bash = bash || g.bash;
     }
     if (this.tilt && this.tilt.active && Math.abs(this.tilt.steer) > Math.abs(analog)) analog = this.tilt.steer;
     const target = (right ? 1 : 0) - (left ? 1 : 0);
@@ -118,7 +120,7 @@ export class PlayerInput {
     this.digital += clamp(target - this.digital, -stepMax, stepMax);
     const o = this.out;
     o.steer = Math.abs(analog) > Math.abs(this.digital) ? analog : this.digital;
-    o.throttle = go; o.brake = brake;
+    o.throttle = go; o.brake = brake; o.bash = bash;
     o.pause = pause && !this.pauseHeld;        // only on the press, not while held
     this.pauseHeld = pause;
     return o;

@@ -20,7 +20,7 @@ export class Sound {
         const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
         this.ctx = new AC();
         this.sfx = this.ctx.createGain(); this.sfx.gain.value = this.sfxOn ? 0.5 : 0; this.sfx.connect(this.ctx.destination);
-        this.music = this.ctx.createGain(); this.music.gain.value = this.musicOn ? 0.13 : 0; this.music.connect(this.ctx.destination);
+        this.music = this.ctx.createGain(); this.music.gain.value = this.musicOn ? 0.15 : 0; this.music.connect(this.ctx.destination);
         const len = this.ctx.sampleRate; this.noiseBuf = this.ctx.createBuffer(1, len, len);
         const d = this.noiseBuf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
       }
@@ -28,7 +28,7 @@ export class Sound {
     } catch (e) {}
   }
   setSfx(on) { this.sfxOn = on; if (this.sfx) this.sfx.gain.value = on ? 0.5 : 0; }
-  setMusic(on) { this.musicOn = on; if (this.music) this.music.gain.value = on ? 0.13 : 0; }
+  setMusic(on) { this.musicOn = on; if (this.music) this.music.gain.value = on ? 0.15 : 0; }
 
   tone(freq, dur, o = {}) {
     if (!this.ctx || !(o.music ? this.musicOn : this.sfxOn)) return;
@@ -40,7 +40,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(vol, t + (o.attack || 0.012));
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g); g.connect(o.music ? this.music : this.sfx);
+    osc.connect(g); g.connect(o.dest || (o.music ? this.music : this.sfx));
     osc.start(t); osc.stop(t + dur + 0.05);
   }
   noise(dur, o = {}) {
@@ -63,6 +63,9 @@ export class Sound {
   jump() { this.tone(NOTE(4), 0.28, { to: NOTE(16), vol: 0.14 }); }
   land() { this.tone(110, 0.16, { to: 60, vol: 0.3 }); this.noise(0.14, { freq: 500, vol: 0.12 }); }
   bump() { this.tone(180, 0.1, { to: 110, type: 'triangle', vol: 0.22 }); }
+  bash() { this.tone(250, 0.24, { to: 70, type: 'triangle', vol: 0.34 }); this.noise(0.26, { freq: 800, to: 2800, vol: 0.15, filter: 'bandpass' }); }
+  knocked() { this.tone(NOTE(17), 0.32, { to: NOTE(0), type: 'triangle', vol: 0.24 }); }
+  knockout() { for (const [i, n] of [19, 24, 28].entries()) this.tone(NOTE(n), 0.24, { type: 'triangle', vol: 0.22, delay: i * 0.07 }); }
   scrape() { this.noise(0.12, { freq: 1800, vol: 0.07, filter: 'bandpass' }); }
   shield() { this.tone(NOTE(19), 0.14, { to: NOTE(24), vol: 0.1 }); }
   fall() { this.tone(NOTE(19), 0.9, { to: NOTE(-5), vol: 0.16 }); }
@@ -89,32 +92,66 @@ export class Sound {
     n.g.gain.setTargetAtTime(on ? 0.05 + k * 0.05 : 0, t, 0.1);
   }
 
-  // ----- music: a light looping tune in C major pentatonic -----
+  // ----- music: a fast, scrappy race tune -----
+  // Four-on-the-floor kick, snare on 2 and 4, a galloping bass and a cheeky lead riff in E minor.
+  // The lead is a square wave through a low-pass filter, so it has bite without being harsh.
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
-    this.step = 0; this.nextTime = this.ctx.currentTime + 0.1;
-    this.musicTimer = setInterval(() => this.schedule(), 90);
+    if (!this.leadBus) {
+      this.leadBus = this.ctx.createBiquadFilter(); this.leadBus.type = 'lowpass'; this.leadBus.frequency.value = 2300; this.leadBus.Q.value = 0.8;
+      this.leadBus.connect(this.music);
+      this.bassBus = this.ctx.createBiquadFilter(); this.bassBus.type = 'lowpass'; this.bassBus.frequency.value = 620;
+      this.bassBus.connect(this.music);
+    }
+    this.step = 0; this.fast = false; this.nextTime = this.ctx.currentTime + 0.1;
+    this.musicTimer = setInterval(() => this.schedule(), 80);
   }
   stopMusic() { clearInterval(this.musicTimer); this.musicTimer = null; }
+  // Final lap: the tune speeds up.
+  setFinalLap(on) { this.fast = on; }
   schedule() {
     if (!this.ctx || this.ctx.state !== 'running') return;
-    const S = 60 / 124 / 2;                                   // eighth notes at 124 bpm
     if (this.nextTime < this.ctx.currentTime) this.nextTime = this.ctx.currentTime + 0.05;
-    const _ = null;
-    const lead = [
-      12, _, 16, 19, _, 16, 21, 19, 16, _, 12, 14, 16, _, 14, _,
-      12, _, 16, 19, _, 24, 21, 19, 21, _, 19, 16, 14, _, 12, _,
-      9, _, 12, 16, _, 12, 19, 16, 14, _, 9, 12, 14, _, 12, _,
-      7, _, 12, 14, _, 16, 19, 21, 24, _, 21, 19, 16, 14, 12, _,
-    ];
-    const bass = [0, 0, -3, -3, -8, -8, -5, -5];              // one per half bar: C C A A F F G G
-    while (this.nextTime < this.ctx.currentTime + 0.35) {
-      const i = this.step % lead.length, t = this.nextTime;
-      if (lead[i] != null) this.tone(NOTE(lead[i]), S * 1.7, { music: true, type: 'triangle', vol: 0.5, at: t });
-      if (i % 4 === 0) this.tone(NOTE(bass[Math.floor(i / 4) % 8] - 12), S * 3.4, { music: true, vol: 0.7, at: t });
-      if (i % 4 === 2) this.tone(NOTE(bass[Math.floor(i / 4) % 8]), S * 1.2, { music: true, vol: 0.3, at: t });
-      if (i % 2 === 1) this.noise(0.04, { music: true, freq: 6000, filter: 'highpass', vol: 0.25, at: t });
+    while (this.nextTime < this.ctx.currentTime + 0.3) {
+      const S = 60 / (this.fast ? 172 : 154) / 4;                // one sixteenth note
+      const t = this.nextTime, i = this.step % 16;
+      const bar = SONG[Math.floor(this.step / 16) % SONG.length];
+      const lead = bar.lead[i], root = bar.root;
+      // drums
+      if (i % 4 === 0) this.tone(150, 0.13, { music: true, to: 46, vol: 1.0, at: t });
+      if (i === 4 || i === 12) { this.noise(0.13, { music: true, freq: 1900, filter: 'bandpass', vol: 0.55, at: t }); this.tone(200, 0.07, { music: true, to: 130, type: 'triangle', vol: 0.35, at: t }); }
+      if (i % 2 === 0) this.noise(0.03, { music: true, freq: 7500, filter: 'highpass', vol: i % 4 === 2 ? 0.26 : 0.12, at: t });
+      if (this.fast && i % 2 === 1) this.noise(0.02, { music: true, freq: 8000, filter: 'highpass', vol: 0.1, at: t });
+      if (bar.fill && i >= 12) this.noise(0.07, { music: true, freq: 1500 + i * 120, filter: 'bandpass', vol: 0.45, at: t });
+      // bass: a gallop on the chord root with octave pops
+      const b = BASS[i];
+      if (b != null) {
+        this.tone(NOTE(root + b), S * 1.5, { music: true, type: 'square', vol: 0.34, at: t, dest: this.bassBus });
+        this.tone(NOTE(root + b), S * 1.8, { music: true, type: 'triangle', vol: 0.5, at: t });
+      }
+      // lead
+      if (lead != null) {
+        this.tone(NOTE(lead), S * 1.9, { music: true, type: 'square', vol: 0.3, at: t, dest: this.leadBus, attack: 0.006 });
+        this.tone(NOTE(lead - 12), S * 1.6, { music: true, type: 'triangle', vol: 0.26, at: t });
+      }
       this.nextTime += S; this.step++;
     }
   }
 }
+
+// Sixteen steps per bar. Lead notes are semitones above middle C; null is a rest.
+const _ = null;
+const BASS = [0, _, 0, 0, 12, _, 0, _, 0, _, 0, 0, 12, _, 7, _];
+const A = [
+  { root: -20, lead: [16, _, 16, 19, _, 16, _, 11, 14, _, 16, _, 19, 21, _, _] },            // E minor
+  { root: -17, lead: [19, _, 19, 23, _, 19, _, 14, 16, _, 19, _, 23, 21, 19, _] },           // G
+  { root: -22, lead: [18, _, 18, 21, _, 18, _, 14, 16, _, 18, _, 21, 18, _, 14] },           // D
+  { root: -15, lead: [16, _, 13, 16, _, 21, _, 16, 13, _, 16, 18, 19, 21, 23, 25], fill: true }, // A, with a run up into the repeat
+];
+const B = [
+  { root: -24, lead: [12, _, _, 16, _, _, 19, _, 24, _, 19, _, 16, _, 19, _] },              // C
+  { root: -22, lead: [14, _, _, 18, _, _, 21, _, 26, _, 21, _, 18, _, 21, _] },              // D
+  { root: -20, lead: [16, _, 19, _, 23, _, 28, _, 26, _, 23, _, 19, _, 16, _] },             // E minor
+  { root: -25, lead: [15, _, 18, _, 23, _, 27, _, 23, 23, _, 23, 23, _, 23, 23], fill: true }, // B: drum-roll finish
+];
+const SONG = [...A, ...A, ...B, ...A];
