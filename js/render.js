@@ -471,30 +471,38 @@ export class World {
   }
 
   // ---------- per-frame ----------
-  update(race, dt) {
+  update(race, dt, alpha = 1) {
     this.time += dt;
+    this.alpha = alpha;
+    const ease = 1 - Math.exp(-dt * 14);
+    this.trailT = (this.trailT || 0) + dt * 60;
+    const trailN = Math.floor(this.trailT); this.trailT -= trailN;
     const t = this.track, P = this._pose;
     this.boostTex.offset.y -= dt * 2.2;
     for (const r of race.racers) {
       const v = this.racers[r.index]; if (!v) continue;
-      race.pose(r, P);
+      race.pose(r, P, alpha);
       v.group.visible = P.visible;
       v.shadow.visible = P.visible && r.mode === 'drive';
       if (!P.visible) continue;
-      const hover = 0.78 + Math.sin(this.time * 5 + v.bob) * 0.06 - (r.landT > 0 ? r.landT * 0.9 : 0);
+      // a landing squashes the ship down and back up smoothly (no snap on the frame it touches down)
+      const hover = 0.78 + Math.sin(this.time * 5 + v.bob) * 0.06 - (r.landT > 0 ? Math.sin(Math.PI * (1 - r.landT / 0.35)) * 0.26 : 0);
       v.x = P.x; v.y = P.y + (r.mode === 'drive' ? hover : 0); v.z = P.z; v.heading = P.heading;
       v.group.position.set(v.x, v.y, v.z);
       v.group.rotation.y = -P.heading;
-      v.tilt.rotation.set(P.roll, 0, P.pitch);
+      // lean and pitch are eased, so a one-step hop over a bump cannot flick the ship for a frame
+      if (r.mode !== 'drive' || !v.posed) { v.roll = P.roll; v.pitch = P.pitch; v.posed = r.mode === 'drive'; }
+      else { v.roll += (P.roll - v.roll) * ease; v.pitch += (P.pitch - v.pitch) * ease; }
+      v.tilt.rotation.set(v.roll, 0, v.pitch);
       const boosting = r.boostT > 0;
       const k = clamp(r.v / V_MAX, 0, 1.4);
       v.flame.scale.set(0.4 + k * (boosting ? 3.4 : 1.5) + Math.random() * 0.25, boosting ? 1.6 : 1, boosting ? 1.6 : 1);
       v.flame.material.color.set(boosting ? '#ffb347' : '#7df9ff');
-      v.glow.material.opacity = r.air ? 0.25 : 0.7;
+      v.glow.material.opacity += ((r.air ? 0.25 : 0.7) - v.glow.material.opacity) * ease;
       v.mesh.visible = r.invuln > 0 ? Math.floor(this.time * 14) % 2 === 0 : true;
       v.shield.material.opacity = r.invuln > 0 ? 0.22 : r.shieldT > 0 ? r.shieldT * 0.8 : 0;
       if (r.mode === 'drive') {
-        const gy = t.heightAt(r.s) - r.d * Math.sin(t.bankAt(r.s));
+        const gy = P.ground;
         v.shadow.position.set(P.x, gy + 0.08, P.z);
         const up = Math.max(0, P.y - gy);
         v.shadow.scale.setScalar(Math.max(0.35, 1 - up * 0.12));
@@ -502,7 +510,7 @@ export class World {
         // thruster trail
         if (r.v > 4) {
           const fx = Math.cos(P.heading), fz = Math.sin(P.heading);
-          const n = boosting ? 3 : 1;
+          const n = trailN * (boosting ? 3 : 1);
           for (let i = 0; i < n; i++) this.fx.spawn(v.x - fx * 2.2 + (Math.random() - 0.5) * 0.3, v.y + 0.05 + (Math.random() - 0.5) * 0.3, v.z - fz * 2.2 + (Math.random() - 0.5) * 0.3,
             -fx * 3 + (Math.random() - 0.5), Math.random() * 0.6, -fz * 3 + (Math.random() - 0.5), boosting ? 0.5 : 0.3, boosting ? 1.5 : 0.9, boosting ? (i ? '#ff7a1f' : '#ffe26a') : v.ch.trim, { grow: -0.7 });
         }
@@ -566,12 +574,12 @@ export class World {
   makeView(racerIndex) {
     return { racer: racerIndex, cam: new THREE.PerspectiveCamera(64, 1, 0.3, 1500), pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 64, ready: false, rect: { x: 0, y: 0, w: 1, h: 1 }, orbit: false, spin: 0 };
   }
-  updateView(view, race, dt) {
+  updateView(view, race, dt, alpha = 1) {
     const r = race.racers[view.racer], P = this._pose, v = this._v;
-    race.pose(r, P);
+    race.pose(r, P, alpha);
     const kPos = 1 - Math.exp(-dt * 7), kLook = 1 - Math.exp(-dt * 11);
     if (r.mode === 'drive') {
-      let h = P.psi + r.th * 0.55, dist = 6.6 + clamp(r.v / V_MAX, 0, 1.3) * 1.8, height = 3.1;
+      let h = P.psi + P.th * 0.55, dist = 6.6 + clamp(r.v / V_MAX, 0, 1.3) * 1.8, height = 3.1;
       if (view.orbit) { view.spin += dt * 0.25; h += 2.4 + Math.sin(view.spin) * 0.9; dist = 9; height = 3.6; }
       else if (race.state === 'countdown') h += Math.max(0, race.countdown - 0.4) * 0.55;
       const fx = Math.cos(h), fz = Math.sin(h), py = P.y + 0.78;
@@ -580,7 +588,7 @@ export class World {
       const gy = this.gridHeight(v.x, v.z) + 1.3; if (v.y < gy) v.y = gy;
       if (!view.ready || r._snap) { view.pos.copy(v); } else view.pos.lerp(v, kPos);
       const ahead = view.orbit ? 0 : 6;
-      v.set(P.x + Math.cos(P.psi + r.th * 0.55) * ahead, py + 1.0, P.z + Math.sin(P.psi + r.th * 0.55) * ahead);
+      v.set(P.x + Math.cos(P.psi + P.th * 0.55) * ahead, py + 1.0, P.z + Math.sin(P.psi + P.th * 0.55) * ahead);
       if (!view.ready || r._snap) view.look.copy(v); else view.look.lerp(v, kLook);
       view.ready = true;
     } else {
@@ -591,7 +599,7 @@ export class World {
     view.fov += (fov - view.fov) * (1 - Math.exp(-dt * 5));
     view.cam.position.copy(view.pos);
     view.cam.lookAt(view.look);
-    if (r.mode === 'drive' && !view.orbit) view.cam.rotateZ(-r.steer * 0.035);
+    if (r.mode === 'drive' && !view.orbit) view.cam.rotateZ(-P.steer * 0.035);
   }
 
   resize() {

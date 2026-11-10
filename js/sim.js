@@ -69,6 +69,8 @@ export class Race {
   step(inputs = []) {
     this.events.length = 0;
     this.tick++;
+    // Remember where everyone was, so the display can blend between steps (see pose).
+    for (const r of this.racers) { r.ps = r.s; r.pd = r.d; r.pth = r.th; r.py = r.y; r.psteer = r.steer; r.pmode = r.mode; r.pwx = r.wx; r.pwy = r.wy; r.pwz = r.wz; r.pspin = r.spin; }
     if (this.state === 'countdown') {
       this.countdown -= TICK;
       const c = Math.ceil(this.countdown);
@@ -306,7 +308,8 @@ export class Race {
         if (b.mode !== 'drive' || b.invuln > 0) continue;
         const ds = t.deltaS(a.s, b.s), dd = a.d - b.d;
         if (Math.abs(ds) > 2.8 || Math.abs(dd) > 1.8 || Math.abs(a.y - b.y) > 1.5) continue;
-        const push = (1.8 - Math.abs(dd)) * 0.5 + 0.02;
+        // Ease ships apart over a few steps instead of snapping them sideways in one.
+        const push = Math.min(0.11, (1.8 - Math.abs(dd)) * 0.5 + 0.02);
         const dir = dd >= 0 ? 1 : -1;
         a.d += dir * push; b.d -= dir * push;
         a.th += dir * 0.04; b.th -= dir * 0.04;
@@ -318,21 +321,34 @@ export class Race {
   }
 
   // Where to draw a racer: world position, heading, pitch and roll.
-  pose(r, out = {}) {
+  // alpha (0..1) blends from the previous step to the current one: the screen redraws on its
+  // own clock (60, 90 or 120 times a second), so drawing raw step positions makes ships judder.
+  pose(r, out = {}, alpha = 1) {
     const t = this.track;
+    // No blending across a teleport (falling off, respawning) or before the first step.
+    const a = r.pmode === r.mode && r.ps != null ? alpha : 1;
     if (r.mode === 'fall' || r.mode === 'dead') {
-      out.x = r.wx; out.y = r.wy; out.z = r.wz; out.heading = r.wpsi + r.spin * 0.6; out.pitch = -r.spin * 0.8; out.roll = r.spin;
+      const spin = r.pspin + (r.spin - r.pspin) * a;
+      out.x = r.pwx + (r.wx - r.pwx) * a; out.y = r.pwy + (r.wy - r.pwy) * a; out.z = r.pwz + (r.wz - r.pwz) * a;
+      out.heading = r.wpsi + spin * 0.6; out.pitch = -spin * 0.8; out.roll = spin;
       out.visible = r.mode === 'fall';
       return out;
     }
-    const w = t.toWorld(r.s, r.d, out);
-    const bank = t.bankAt(r.s);
-    out.y = r.y - r.d * Math.sin(bank);
-    out.heading = w.psi + r.th;
+    let s = r.s, d = r.d, th = r.th, y = r.y, steer = r.steer;
+    if (a < 1) {
+      s = t.wrapS(r.ps + t.deltaS(r.s, r.ps) * a);
+      d = r.pd + (r.d - r.pd) * a; th = r.pth + (r.th - r.pth) * a; y = r.py + (r.y - r.py) * a; steer = r.psteer + (r.steer - r.psteer) * a;
+    }
+    const w = t.toWorld(s, d, out);
+    const bank = t.bankAt(s);
+    out.s = s; out.d = d; out.th = th; out.steer = steer;
+    out.ground = w.y;                       // trail surface height under the ship
+    out.y = y - d * Math.sin(bank);
+    out.heading = w.psi + th;
     out.psi = w.psi;
-    const slope = (t.heightAt(r.s + 1.2) - t.heightAt(r.s - 1.2)) / 2.4;
+    const slope = (t.heightAt(s + 1.2) - t.heightAt(s - 1.2)) / 2.4;
     out.pitch = r.air ? Math.atan2(r.vy, Math.max(8, r.v)) * 0.7 : Math.atan(slope);
-    out.roll = (r.air ? 0 : bank) + r.steer * 0.32;
+    out.roll = (r.air ? 0 : bank) + steer * 0.32;
     out.visible = true;
     return out;
   }

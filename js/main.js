@@ -9,7 +9,7 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-10.2';
+const BUILD = '2026-11-10.3';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -180,8 +180,10 @@ function draw(dt) {
     G.followT -= dt;
     if (G.followT <= 0) { G.followT = 9; G.views[0].racer = race.order[Math.floor(Math.random() * 3)].index; G.views[0].ready = false; }
   }
-  world.update(race, G.mode === 'paused' ? 0 : dt);
-  for (const v of G.views) world.updateView(v, race, dt);
+  // how far we are between the last simulation step and the next one
+  const alpha = G.mode === 'paused' || G.testing ? 1 : clamp(G.acc / TICK, 0, 1);
+  world.update(race, G.mode === 'paused' ? 0 : dt, alpha);
+  for (const v of G.views) world.updateView(v, race, dt, alpha);
   for (const r of race.racers) r._snap = false;
   world.render(G.views);
   for (const h of G.huds) updateHud(h, race);
@@ -320,6 +322,6 @@ window.__bb = {
     for (let i = 0; i < n; i++) {
       if (input) { G.race.step([input]); for (const e of G.race.events) handleEvent(e, G.race); } else tick();
     }
-    draw(TICK);
+    G.testing = true; draw(TICK); G.testing = false;
   },
 };
