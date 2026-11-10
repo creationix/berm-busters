@@ -1,0 +1,19 @@
+{
+  "name": "Berm Busters",
+  "short_name": "Berm Busters",
+  "description": "Hover-ship racing for kids on Ozark mountain trails.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0e2a22",
+  "theme_color": "#0e2a22",
+  "categories": ["games", "racing", "kids"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

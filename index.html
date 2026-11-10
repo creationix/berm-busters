@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Berm Busters</title>
+<meta name="description" content="Berm Busters: hover-ship racing on Ozark mountain trails. Device check page.">
+<meta name="theme-color" content="#0e2a22">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Berm Busters">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root {
+    --bg: #0e2a22; --card: #17382e; --line: #2c5a4b; --ink: #f4f1e6; --dim: #a9c2b6;
+    --orange: #ff8a1f; --gold: #ffd23f; --red: #ff4d5e; --lime: #9be564; --cyan: #4fd8ff;
+    --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Diagnostic colours on purpose: if a strip shows at a screen edge, its colour says what is showing through.
+     magenta = the page canvas, yellow = body, white = outside the page altogether. */
+  html { margin: 0; height: 100%; background: #ff00ff; overflow: hidden; }
+  body { margin: 0; height: 100%; background: #ffe600; overflow: hidden; color: var(--ink);
+         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         -webkit-user-select: none; user-select: none; touch-action: manipulation; overscroll-behavior: none; }
+  #app { background: var(--bg); overflow: hidden; }
+  /* Five ways of filling the screen; the buttons in the Screen card switch between them. */
+  html[data-layout="fixed"] #app { position: fixed; inset: 0; }
+  html[data-layout="dvh"] #app { position: absolute; left: 0; top: 0; width: 100%; height: 100dvh; }
+  html[data-layout="vh"] #app { position: absolute; left: 0; top: 0; width: 100%; height: 100vh; }
+  html[data-layout="lvh"] #app { position: absolute; left: 0; top: 0; width: 100%; height: 100lvh; }
+  html[data-layout="screen"] #app { position: absolute; left: 0; top: 0; width: 100%; height: var(--screen-h, 100%); }
+
+  .edge { position: absolute; z-index: 5; font: 700 9px/8px system-ui, sans-serif; color: #000; text-align: center; letter-spacing: 1px; pointer-events: none; }
+  .edge.t { top: 0; left: 0; right: 0; height: 8px; background: var(--red); }
+  .edge.b { bottom: 0; left: 0; right: 0; height: 8px; background: var(--lime); }
+  .edge.l { top: 0; bottom: 0; left: 0; width: 8px; background: var(--cyan); }
+  .edge.r { top: 0; bottom: 0; right: 0; width: 8px; background: var(--orange); }
+
+  #scroll { position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+            padding: calc(16px + var(--sat)) calc(16px + var(--sar)) calc(24px + var(--sab)) calc(16px + var(--sal)); }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 4px; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .5px; color: var(--gold); text-shadow: 0 2px 0 #7a3d00; }
+  #build { color: var(--dim); font-size: 13px; }
+  .intro { color: var(--dim); margin: 0 0 14px; max-width: 70ch; }
+  #cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-width: 0; }
+  .card h2 { margin: 0 0 4px; font-size: 18px; color: var(--orange); }
+  .card p.how { margin: 0 0 10px; color: var(--dim); font-size: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+  button { font: inherit; font-weight: 700; color: #1b1300; background: var(--gold); border: 0; border-radius: 10px;
+           padding: 10px 14px; min-height: 44px; cursor: pointer; }
+  button.alt { background: #2c5a4b; color: var(--ink); }
+  button.on { outline: 3px solid var(--cyan); }
+  button:disabled { opacity: .5; }
+  input[type=text] { font: 700 22px/1 ui-monospace, Consolas, monospace; text-transform: uppercase; letter-spacing: 6px; width: 7.5ch;
+           padding: 9px 10px; border-radius: 10px; border: 2px solid var(--line); background: #0b1f19; color: var(--ink); text-align: center; }
+  pre { margin: 8px 0 0; padding: 10px; background: #0b1f19; border-radius: 10px; font: 12.5px/1.45 ui-monospace, Consolas, monospace;
+        white-space: pre-wrap; word-break: break-word; color: #d9eadf; -webkit-user-select: text; user-select: text; }
+  .big { font: 800 44px/1 ui-monospace, Consolas, monospace; letter-spacing: 8px; color: var(--gold); }
+  .status { font-weight: 700; }
+  .ok { color: var(--lime); } .bad { color: var(--red); } .warn { color: var(--gold); }
+  #steerBar { position: relative; height: 26px; border-radius: 13px; background: #0b1f19; border: 1px solid var(--line); overflow: hidden; }
+  #steerBar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--line); }
+  #steerDot { position: absolute; top: 2px; width: 22px; height: 22px; margin-left: -11px; left: 50%; border-radius: 50%; background: var(--orange); box-shadow: 0 0 12px var(--orange); }
+  .pad { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; font-size: 13px; }
+  .axes { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  .axis { width: 64px; height: 10px; background: #0b1f19; border-radius: 5px; position: relative; overflow: hidden; }
+  .axis i { position: absolute; top: 0; bottom: 0; width: 8px; margin-left: -4px; background: var(--cyan); border-radius: 4px; }
+  .btns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .btns b { min-width: 22px; height: 22px; border-radius: 11px; background: #0b1f19; font: 700 11px/22px system-ui; text-align: center; color: var(--dim); }
+  .btns b.down { background: var(--lime); color: #000; }
+  .peer { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; font-size: 14px; }
+  .peer .rtt { font: 800 20px/1.2 ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="edge t">TOP</div><div class="edge b">BOTTOM</div><div class="edge l"></div><div class="edge r"></div>
+  <div id="scroll">
+    <header><h1>Berm Busters</h1><span id="build"></span></header>
+    <p class="intro">Device check. The game is not here yet: this page tests the four things only a real device can prove, before the game is built on them.</p>
+    <div id="cards">
+
+      <section class="card" id="cardScreen">
+        <h2>1 · Screen</h2>
+        <p class="how">Add this page to the Home Screen, open it from there, and look at all four edges. The red, green, blue and orange bars should touch the very edge of the glass. If a strip shows beyond a bar, try the other layouts and note which one fixes it and what colour the strip was.</p>
+        <div class="row" id="layoutBtns">
+          <button class="alt" data-layout="fixed">A fixed</button>
+          <button class="alt" data-layout="dvh">B dvh</button>
+          <button class="alt" data-layout="vh">C vh</button>
+          <button class="alt" data-layout="lvh">D lvh</button>
+          <button class="alt" data-layout="screen">E screen</button>
+        </div>
+        <pre id="screenOut"></pre>
+      </section>
+
+      <section class="card" id="cardTilt">
+        <h2>2 · Tilt steering</h2>
+        <p class="how">Tap Enable, allow motion if asked, then hold the device in landscape and turn it like a steering wheel. The dot should follow: right when you turn right, and reach the end at about 30°.</p>
+        <div class="row">
+          <button id="tiltBtn">Enable tilt</button>
+          <button id="tiltInv" class="alt">Invert</button>
+          <span id="tiltStatus" class="status"></span>
+        </div>
+        <div id="steerBar"><div id="steerDot"></div></div>
+        <pre id="tiltOut">Not enabled yet.</pre>
+      </section>
+
+      <section class="card" id="cardPads">
+        <h2>3 · Gamepads and touch</h2>
+        <p class="how">Connect a controller and press any button on it; browsers hide gamepads until then. Move the left stick and press buttons to see them light up. Put several fingers on the screen to check multi-touch.</p>
+        <div id="touchOut" class="status"></div>
+        <div id="padsOut"></div>
+      </section>
+
+      <section class="card" id="cardNet">
+        <h2>4 · Device-to-device connection</h2>
+        <p class="how">On one device tap Host. On every other device, on the same Wi-Fi, type the four letters and tap Join. Each connection should say "direct" with a round trip of a few milliseconds.</p>
+        <div class="row">
+          <button id="hostBtn">Host</button>
+          <input id="codeIn" type="text" maxlength="4" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
+          <button id="joinBtn">Join</button>
+          <button id="leaveBtn" class="alt" hidden>Leave</button>
+        </div>
+        <div id="netCode" class="big"></div>
+        <div id="netStatus" class="status"></div>
+        <div id="peersOut"></div>
+      </section>
+
+      <section class="card" id="cardReport">
+        <h2>Report</h2>
+        <p class="how">Everything above as text, to copy or screenshot and send back.</p>
+        <div class="row"><button id="copyBtn" class="alt">Copy report</button><span id="copyStatus" class="status"></span></div>
+        <pre id="reportOut"></pre>
+      </section>
+
+    </div>
+    <div id="probes" aria-hidden="true" style="position:absolute;left:0;top:0;width:0;visibility:hidden;pointer-events:none">
+      <div data-p="vh" style="height:100vh"></div><div data-p="dvh" style="height:100dvh"></div>
+      <div data-p="lvh" style="height:100lvh"></div><div data-p="svh" style="height:100svh"></div>
+      <div data-p="sat" style="height:env(safe-area-inset-top,0px)"></div><div data-p="sar" style="height:env(safe-area-inset-right,0px)"></div>
+      <div data-p="sab" style="height:env(safe-area-inset-bottom,0px)"></div><div data-p="sal" style="height:env(safe-area-inset-left,0px)"></div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script type="module">
+import { Tilt, isIOS, screenAngle } from './js/tilt.js';
+
+const BUILD = '2026-11-10.1 (device check)';
+const LS = 'berm-busters-';            // every saved setting uses this prefix: other games share this origin
+const $ = id => document.getElementById(id);
+$('build').textContent = 'build ' + BUILD;
+
+const lsGet = k => { try { return localStorage.getItem(LS + k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(LS + k, v); } catch (e) {} };
+
+function deviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Android phone' : 'Android tablet';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  if (/Mac/.test(ua)) return 'Mac';
+  if (/CrOS/.test(ua)) return 'Chromebook';
+  if (/Linux/.test(ua)) return 'Linux PC';
+  return 'Device';
+}
+function browserName() {
+  const ua = navigator.userAgent;
+  let m;
+  if ((m = ua.match(/Edg\/(\d+)/))) return 'Edge ' + m[1];
+  if ((m = ua.match(/CriOS\/(\d+)/))) return 'Chrome iOS ' + m[1];
+  if ((m = ua.match(/FxiOS\/(\d+)/))) return 'Firefox iOS ' + m[1];
+  if ((m = ua.match(/Firefox\/(\d+)/))) return 'Firefox ' + m[1];
+  if ((m = ua.match(/Chrome\/(\d+)/))) return 'Chrome ' + m[1];
+  if ((m = ua.match(/Version\/([\d.]+).*Safari/))) return 'Safari ' + m[1];
+  return 'Browser';
+}
+
+// ---------- 1. Screen ----------
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+
+function setLayout(name) {
+  document.documentElement.dataset.layout = name;
+  lsSet('layout', name);
+  for (const b of $('layoutBtns').children) b.classList.toggle('on', b.dataset.layout === name);
+  screenInfo();
+}
+$('layoutBtns').addEventListener('click', e => { const l = e.target.dataset && e.target.dataset.layout; if (l) setLayout(l); });
+
+function screenInfo() {
+  // Layout E sizes the app from the physical screen, which only makes sense when installed.
+  const land = innerWidth >= innerHeight;
+  const sh = land ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+  document.documentElement.style.setProperty('--screen-h', sh + 'px');
+  const p = {};
+  for (const el of $('probes').children) p[el.dataset.p] = Math.round(el.getBoundingClientRect().height * 10) / 10;
+  const r = $('app').getBoundingClientRect();
+  const vv = window.visualViewport;
+  const o = screen.orientation;
+  const lines = [
+    `device      ${deviceName()} · ${browserName()}`,
+    `installed   ${isStandalone() ? 'YES (opened from Home Screen)' : 'no (browser tab)'}`,
+    `layout      ${document.documentElement.dataset.layout}`,
+    `app box     ${Math.round(r.width)} x ${Math.round(r.height)} at ${Math.round(r.left)},${Math.round(r.top)}`,
+    `window      ${innerWidth} x ${innerHeight}`,
+    `document    ${document.documentElement.clientWidth} x ${document.documentElement.clientHeight}`,
+    `visual      ${vv ? Math.round(vv.width) + ' x ' + Math.round(vv.height) + ' offset ' + Math.round(vv.offsetTop) : 'n/a'}`,
+    `screen      ${screen.width} x ${screen.height} (avail ${screen.availWidth} x ${screen.availHeight}) dpr ${devicePixelRatio}`,
+    `100vh ${p.vh}  dvh ${p.dvh}  lvh ${p.lvh}  svh ${p.svh}`,
+    `safe area   top ${p.sat}  right ${p.sar}  bottom ${p.sab}  left ${p.sal}`,
+    `orientation ${o ? o.type + ' ' + o.angle : 'n/a'} (angle used ${screenAngle()})`,
+  ];
+  $('screenOut').textContent = lines.join('\n');
+  return lines;
+}
+addEventListener('resize', screenInfo);
+addEventListener('orientationchange', () => setTimeout(screenInfo, 300));
+if (window.visualViewport) visualViewport.addEventListener('resize', screenInfo);
+setLayout(lsGet('layout') || 'fixed');
+
+// ---------- 2. Tilt ----------
+const tilt = new Tilt();
+let tiltResult = 'not tried';
+tilt.invert = lsGet('tiltInvert') === '1';
+$('tiltInv').classList.toggle('on', tilt.invert);
+$('tiltInv').addEventListener('click', () => {
+  tilt.invert = !tilt.invert; lsSet('tiltInvert', tilt.invert ? '1' : '0');
+  $('tiltInv').classList.toggle('on', tilt.invert);
+});
+$('tiltBtn').addEventListener('click', async () => {
+  const res = await tilt.enable();
+  tiltResult = res;
+  const st = $('tiltStatus');
+  if (res === 'ok') { st.textContent = 'Enabled'; st.className = 'status ok'; }
+  else if (res === 'denied') { st.textContent = 'Permission refused. On iOS, close and reopen the app to be asked again.'; st.className = 'status bad'; }
+  else if (res === 'insecure') { st.textContent = 'Needs https.'; st.className = 'status bad'; }
+  else { st.textContent = 'This device has no motion sensor support.'; st.className = 'status bad'; }
+});
+function tiltInfo() {
+  $('steerDot').style.left = (50 + tilt.steer * 46) + '%';
+  const f = v => (v >= 0 ? ' ' : '') + v.toFixed(2);
+  const lines = [
+    `result      ${tiltResult}${Tilt.needsPermission ? ' (this device asks permission)' : ''}`,
+    `events      ${tilt.events}${tilt.active && tilt.events === 0 ? '  <- none yet: no sensor, or blocked' : ''}`,
+    `steer       ${f(tilt.steer)} (raw ${f(tilt.rawSteer)})${tilt.invert ? ' inverted' : ''}`,
+    `gravity     ${tilt.raw ? `x ${f(tilt.raw.x)}  y ${f(tilt.raw.y)}  z ${f(tilt.raw.z)}` : 'n/a'}`,
+    `on screen   right ${f(tilt.right)}  up ${f(tilt.up)}  sign ${tilt.state.sign}  angle ${screenAngle()}`,
+  ];
+  $('tiltOut').textContent = lines.join('\n');
+  return lines;
+}
+
+// ---------- 3. Gamepads and touch ----------
+let touches = 0, maxTouches = 0;
+const countTouches = e => { touches = e.touches.length; maxTouches = Math.max(maxTouches, touches); };
+for (const t of ['touchstart', 'touchend', 'touchcancel']) addEventListener(t, countTouches, { passive: true });
+
+function readPads() {
+  const list = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+  return list.map(g => ({
+    index: g.index, id: g.id, mapping: g.mapping || '(none)',
+    axes: Array.from(g.axes), buttons: g.buttons.map(b => b.pressed || b.value > 0.5),
+  }));
+}
+function padsInfo() {
+  $('touchOut').textContent = `Touch: ${touches} finger${touches === 1 ? '' : 's'} down now, most at once ${maxTouches} (device supports ${navigator.maxTouchPoints})`;
+  const pads = readPads();
+  const out = $('padsOut');
+  if (!navigator.getGamepads) { out.textContent = 'This browser has no gamepad support.'; return ['gamepads    unsupported']; }
+  if (!pads.length) { out.innerHTML = '<div class="pad">No gamepad seen yet. Press a button on it.</div>'; return ['gamepads    none seen']; }
+  out.innerHTML = pads.map(g => `<div class="pad"><b>Pad ${g.index + 1}</b> · ${escapeHtml(g.id)} · mapping ${escapeHtml(g.mapping)}
+    <div class="axes">${g.axes.map(a => `<span class="axis"><i style="left:${50 + a * 44}%"></i></span>`).join('')}</div>
+    <div class="btns">${g.buttons.map((d, i) => `<b class="${d ? 'down' : ''}">${i}</b>`).join('')}</div></div>`).join('');
+  return pads.map(g => `gamepad ${g.index + 1}   ${g.id} · mapping ${g.mapping} · ${g.axes.length} axes ${g.buttons.length} buttons`);
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ---------- 4. Connection ----------
+const ROOM_PREFIX = 'berm-busters-check-';
+const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';   // no I or O: easy to read aloud
+const net = { peer: null, role: null, code: '', conns: new Map(), status: 'idle', timer: null };
+
+function netStatus(text, cls) { net.status = text; const el = $('netStatus'); el.textContent = text; el.className = 'status ' + (cls || ''); }
+function randomCode() { let s = ''; for (let i = 0; i < 4; i++) s += LETTERS[Math.floor(Math.random() * LETTERS.length)]; return s; }
+
+function leave() {
+  clearInterval(net.timer); net.timer = null;
+  if (net.peer) { try { net.peer.destroy(); } catch (e) {} }
+  net.peer = null; net.role = null; net.code = ''; net.conns.clear();
+  $('netCode').textContent = ''; $('peersOut').innerHTML = '';
+  $('hostBtn').disabled = false; $('joinBtn').disabled = false; $('leaveBtn').hidden = true;
+  netStatus('', '');
+}
+$('leaveBtn').addEventListener('click', leave);
+
+function startTimer() {
+  clearInterval(net.timer);
+  net.timer = setInterval(() => {
+    for (const c of net.conns.values()) {
+      if (!c.open) continue;
+      c.sent++;
+      c.pending.set(c.sent, performance.now());
+      // Pings older than two seconds with no answer count as lost.
+      for (const [n, at] of c.pending) if (performance.now() - at > 2000) { c.pending.delete(n); c.lost++; }
+      try { c.conn.send({ t: 'ping', n: c.sent }); } catch (e) {}
+    }
+  }, 250);
+}
+
+function host(attempt = 0) {
+  leave();
+  if (typeof Peer === 'undefined') return netStatus('Connection library did not load.', 'bad');
+  net.role = 'host'; net.code = randomCode();
+  $('hostBtn').disabled = true; $('joinBtn').disabled = true; $('leaveBtn').hidden = false;
+  netStatus('Opening a room…', 'warn');
+  const peer = net.peer = new Peer(ROOM_PREFIX + net.code, { debug: 1 });
+  peer.on('open', () => { $('netCode').textContent = net.code; netStatus('Room open. Waiting for other devices to join.', 'ok'); startTimer(); });
+  peer.on('connection', conn => addConn(conn));
+  peer.on('disconnected', () => { if (net.peer === peer) netStatus('Lost the matchmaking service (existing connections keep working).', 'warn'); });
+  peer.on('error', err => {
+    if (net.peer !== peer) return;
+    if (err.type === 'unavailable-id' && attempt < 5) return host(attempt + 1);   // code already in use somewhere: pick another
+    netStatus('Could not open a room: ' + describeError(err), 'bad');
+  });
+}
+function join(code) {
+  code = (code || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (code.length !== 4) return netStatus('Type the four-letter code shown on the host.', 'warn');
+  leave();
+  if (typeof Peer === 'undefined') return netStatus('Connection library did not load.', 'bad');
+  net.role = 'guest'; net.code = code;
+  $('hostBtn').disabled = true; $('joinBtn').disabled = true; $('leaveBtn').hidden = false;
+  netStatus('Finding room ' + code + '…', 'warn');
+  const peer = net.peer = new Peer({ debug: 1 });
+  peer.on('open', () => {
+    const conn = peer.connect(ROOM_PREFIX + code, { reliable: false, serialization: 'json' });
+    addConn(conn);
+    setTimeout(() => {
+      if (net.peer === peer && !conn.open) netStatus('Found the room but the two devices could not reach each other. Are both on the same Wi-Fi (not a guest network)?', 'bad');
+    }, 15000);
+  });
+  peer.on('error', err => {
+    if (net.peer !== peer) return;
+    if (err.type === 'peer-unavailable') netStatus('No room with code ' + code + '. Check the letters, and that the host still shows the code.', 'bad');
+    else netStatus('Could not join: ' + describeError(err), 'bad');
+  });
+}
+function describeError(err) {
+  const t = err && err.type;
+  if (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed') return 'cannot reach the matchmaking service. Is this device online?';
+  if (t === 'browser-incompatible') return 'this browser cannot make direct connections.';
+  return (t || 'error') + (err && err.message ? ' – ' + err.message : '');
+}
+function hostCount() {
+  const n = Array.from(net.conns.values()).filter(c => c.open).length;
+  netStatus(n ? `Room open. ${n} device${n === 1 ? '' : 's'} connected; more can join.` : 'Room open. Waiting for other devices to join.', 'ok');
+}
+function addConn(conn) {
+  const c = { conn, open: false, device: '?', sent: 0, lost: 0, pending: new Map(), rtts: [], last: null, route: 'checking…', closed: false };
+  net.conns.set(conn.peer, c);
+  conn.on('open', () => {
+    c.open = true;
+    conn.send({ t: 'hello', device: deviceName() + ' · ' + browserName() });
+    if (net.role === 'guest') { netStatus('Connected to room ' + net.code + '.', 'ok'); startTimer(); }
+    else hostCount();
+  });
+  conn.on('data', d => {
+    if (!d || typeof d !== 'object') return;
+    if (d.t === 'hello') c.device = String(d.device).slice(0, 60);
+    else if (d.t === 'ping') { try { conn.send({ t: 'pong', n: d.n }); } catch (e) {} }
+    else if (d.t === 'pong') {
+      const at = c.pending.get(d.n);
+      if (at != null) { c.pending.delete(d.n); c.last = performance.now() - at; c.rtts.push(c.last); if (c.rtts.length > 40) c.rtts.shift(); }
+    }
+  });
+  conn.on('close', () => {
+    c.open = false; c.closed = true;
+    if (net.role === 'guest') netStatus('The host closed the room or the connection dropped.', 'bad'); else hostCount();
+  });
+  conn.on('error', err => { c.route = 'error: ' + describeError(err); });
+}
+
+// Works out whether the two devices talk directly or through a relay on the internet.
+async function updateRoutes() {
+  for (const c of net.conns.values()) {
+    const pc = c.conn.peerConnection;
+    if (!c.open || !pc || !pc.getStats) continue;
+    try {
+      const stats = await pc.getStats();
+      let pair = null;
+      stats.forEach(s => { if (s.type === 'transport' && s.selectedCandidatePairId) pair = stats.get(s.selectedCandidatePairId) || pair; });
+      if (!pair) stats.forEach(s => { if (s.type === 'candidate-pair' && (s.selected || (s.nominated && s.state === 'succeeded'))) pair = pair || s; });
+      if (!pair) continue;
+      const lc = stats.get(pair.localCandidateId) || {}, rc = stats.get(pair.remoteCandidateId) || {};
+      const lt = lc.candidateType || '?', rt = rc.candidateType || '?';
+      const relay = lt === 'relay' || rt === 'relay';
+      const lan = lt === 'host' && (rt === 'host' || rt === 'prflx') || rt === 'host' && lt === 'prflx';
+      c.relay = relay;
+      c.route = (relay ? 'RELAYED through the internet (slow path)' : lan ? 'direct, on the local network' : 'direct') + ` [${lt} / ${rt}, ${lc.protocol || '?'}]`;
+    } catch (e) {}
+  }
+}
+setInterval(updateRoutes, 2000);
+
+function netInfo() {
+  const lines = [`connection  ${net.role || 'not started'}${net.code ? ' room ' + net.code : ''} · ${net.status || '-'}`];
+  let html = '';
+  for (const c of net.conns.values()) {
+    const avg = c.rtts.length ? c.rtts.reduce((a, b) => a + b, 0) / c.rtts.length : null;
+    const max = c.rtts.length ? Math.max(...c.rtts) : null;
+    const state = c.open ? 'connected' : c.closed ? 'closed' : 'connecting…';
+    const rtt = c.last == null ? '–' : c.last.toFixed(0) + ' ms';
+    const line = `${c.device} · ${state} · round trip ${rtt}${avg == null ? '' : ` (avg ${avg.toFixed(0)}, worst ${max.toFixed(0)})`} · lost ${c.lost}/${c.sent} · ${c.route}`;
+    lines.push('  peer      ' + line);
+    html += `<div class="peer"><b>${escapeHtml(c.device)}</b> · <span class="${c.open ? 'ok' : c.closed ? 'bad' : 'warn'}">${state}</span>
+      <div class="rtt">${rtt}</div>
+      <div>${avg == null ? '' : `avg ${avg.toFixed(0)} ms · worst ${max.toFixed(0)} ms · `}lost ${c.lost} of ${c.sent}</div>
+      <div class="${c.relay ? 'bad' : ''}">${escapeHtml(c.route)}</div></div>`;
+  }
+  $('peersOut').innerHTML = html;
+  return lines;
+}
+$('hostBtn').addEventListener('click', () => host());
+$('joinBtn').addEventListener('click', () => join($('codeIn').value));
+$('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') join($('codeIn').value); });
+addEventListener('pagehide', () => { if (net.peer) try { net.peer.destroy(); } catch (e) {} });
+
+// ---------- Report + refresh loop ----------
+function refresh() {
+  const lines = ['Berm Busters device check · build ' + BUILD, ...screenInfo(), ...tiltInfo(), ...padsInfo(), ...netInfo()];
+  $('reportOut').textContent = lines.join('\n');
+  return lines.join('\n');
+}
+// A timer rather than animation frames, so the read-outs keep moving when the page is in the background.
+setInterval(refresh, 150);
+refresh();
+$('copyBtn').addEventListener('click', async () => {
+  const st = $('copyStatus');
+  try { await navigator.clipboard.writeText(refresh()); st.textContent = 'Copied'; st.className = 'status ok'; }
+  catch (e) { st.textContent = 'Copy blocked: select the text below instead.'; st.className = 'status warn'; }
+});
+
+const room = new URLSearchParams(location.search).get('room');
+if (room) { $('codeIn').value = room.toUpperCase().slice(0, 4); join(room); }
+
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+
+// Hooks for automated checks.
+window.__bb = { net, tilt, host, join, leave, refresh, setLayout, readPads, BUILD };
+</script>
+</body>
+</html>
