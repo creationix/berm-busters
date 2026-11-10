@@ -6,6 +6,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { EDGE, SURF } from './track.js';
 import { V_MAX } from './sim.js';
 import { Builder, buildRacerGeometry, racerMaterial, characterById } from './models.js';
+import { buildCritterGeometry } from './critters.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -20,6 +21,8 @@ function noise(x, z) {
 function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }; }
 
 const WATER_Y = -1.2, FLOOR_Y = -3.2;
+const EGG_COLORS = ['#fff1d0', '#59d4ff', '#c77dff', '#ffd23f'].map(c => new THREE.Color(c));   // trail, sky, cliff, golden
+const EGG_SPARK = ['#ffffff', '#9fe8ff', '#e2b8ff', '#ffe26a'];
 const FALL_COLORS = ['#e8552a', '#f08a1f', '#f7b52c', '#d93a2a', '#b9c23c', '#8fae3a', '#c7482a', '#ffcf3f'];
 
 // ---------- particles ----------
@@ -117,6 +120,56 @@ export class World {
       g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.4, 'rgba(255,255,255,.45)'); g.addColorStop(1, 'rgba(255,255,255,0)');
       x.fillStyle = g; x.fillRect(0, 0, 64, 64);
     });
+    // Eggs: one instanced mesh draws every egg on the trail and every egg being carried.
+    const eg = new THREE.SphereGeometry(0.46, 10, 8), ep = eg.attributes.position;
+    for (let i = 0; i < ep.count; i++) {
+      const y = ep.getY(i), k = y > 0 ? 1 - 0.3 * (y / 0.46) : 1;          // narrower at the top: an egg, not a ball
+      ep.setXYZ(i, ep.getX(i) * k, y * 1.32, ep.getZ(i) * k);
+    }
+    eg.computeVertexNormals();
+    this.eggMesh = new THREE.InstancedMesh(eg, new THREE.MeshLambertMaterial({ emissive: '#3a3020' }), 160);
+    this.eggMesh.count = 0; this.eggMesh.frustumCulled = false;
+    this.eggMesh.setColorAt(0, EGG_COLORS[0]);
+    this.scene.add(this.eggMesh);
+    // A soft beam of light above each egg on the trail, so they can be spotted from a long way off.
+    const bg = new THREE.CylinderGeometry(0.2, 0.8, 8, 8, 1, true); bg.translate(0, 4, 0);
+    this.beamMesh = new THREE.InstancedMesh(bg, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 80);
+    this.beamMesh.count = 0; this.beamMesh.frustumCulled = false;
+    this.beamMesh.setColorAt(0, EGG_COLORS[0]);
+    this.scene.add(this.beamMesh);
+    this._em = new THREE.Matrix4(); this._eq = new THREE.Quaternion(); this._ep = new THREE.Vector3(); this._es = new THREE.Vector3(); this._ee = new THREE.Euler(); this._ew = {};
+  }
+
+  // Places every egg for this frame: bobbing on the trail, or trailing behind the ship that rescued it.
+  updateEggs(race, dt) {
+    const im = this.eggMesh, t = this.track, m = this._em, q = this._eq, p = this._ep, s = this._es, e3 = this._ee, w = this._ew;
+    let k = 0, nb = 0;
+    for (const e of race.eggs || []) {
+      if (!e.alive || k >= 158) continue;
+      t.toWorld(e.s, e.d, w);
+      const y = w.y + e.h + Math.sin(this.time * 3 + e.s) * 0.14;
+      p.set(w.x, y, w.z); q.setFromEuler(e3.set(0.3, this.time * 2.2 + e.s, 0)); s.setScalar(e.tier >= 2 ? 1.6 : 1.4);
+      im.setMatrixAt(k, m.compose(p, q, s)); im.setColorAt(k, EGG_COLORS[e.tier]); k++;
+      if (nb < 80) { q.identity(); s.set(1, 1, 1); this.beamMesh.setMatrixAt(nb, m.compose(p, q, s)); this.beamMesh.setColorAt(nb, EGG_COLORS[e.tier]); nb++; }
+      if (Math.random() < dt * (e.tier ? 5 : 1.5)) this.fx.spawn(w.x + (Math.random() - 0.5) * 0.8, y + (Math.random() - 0.5), w.z + (Math.random() - 0.5) * 0.8, 0, 1.2, 0, 0.6, 0.55, EGG_SPARK[e.tier], {});
+    }
+    for (const r of race.racers) {
+      const v = this.racers[r.index];
+      if (!v || r.mode !== 'drive' || !r.eggs.length) continue;
+      const fx = Math.cos(v.heading), fz = Math.sin(v.heading);
+      for (let i = 0; i < r.eggs.length && i < 6 && k < 160; i++) {
+        const c = v.crumbs[9 + i * 3];
+        if (c) p.set(c.x, c.y, c.z); else p.set(v.x - fx * (2.5 + i * 0.75), v.y, v.z - fz * (2.5 + i * 0.75));
+        p.y += -0.1 + Math.sin(this.time * 7 + i * 1.3 + v.bob) * 0.1;
+        q.setFromEuler(e3.set(0.25, this.time * 3 + i, 0)); s.setScalar(0.5);
+        im.setMatrixAt(k, m.compose(p, q, s)); im.setColorAt(k, EGG_COLORS[r.eggs[i]]); k++;
+      }
+    }
+    im.count = k;
+    this.beamMesh.count = nb; this.beamMesh.instanceMatrix.needsUpdate = true;
+    if (this.beamMesh.instanceColor) this.beamMesh.instanceColor.needsUpdate = true;
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
   }
 
   // ----- nearest point on the trail centreline -----
@@ -446,10 +499,11 @@ export class World {
 
   // ---------- racers ----------
   clearRacers() {
-    for (const v of this.racers) { this.scene.remove(v.group, v.shadow); v.mesh.geometry.dispose(); }
+    for (const v of this.racers) { if (!v) continue; this.scene.remove(v.group, v.shadow); v.mesh.geometry.dispose(); if (v.pal) v.pal.geometry.dispose(); }
     this.racers = [];
   }
-  addRacer(r) {
+  // buddy: an optional hatchling (from critters.js) who rides along on the side pod.
+  addRacer(r, buddy) {
     const ch = characterById(r.character);
     const group = new THREE.Group(), tilt = new THREE.Group();
     const mesh = new THREE.Mesh(buildRacerGeometry(ch), this.racerMat);
@@ -461,11 +515,16 @@ export class World {
     glow.rotation.x = -Math.PI / 2; glow.position.y = -0.42; tilt.add(glow);
     const shield = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 8), new THREE.MeshBasicMaterial({ color: '#8ff4ff', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
     shield.scale.set(2.7, 1.7, 1.9); shield.position.y = 0.5; tilt.add(shield);
+    let pal = null;
+    if (buddy) {
+      pal = new THREE.Mesh(buildCritterGeometry(buddy), this.racerMat);
+      pal.scale.setScalar(0.62); pal.position.set(-0.25, 0.14, 0.98); tilt.add(pal);
+    }
     group.add(tilt);
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(1.5, 14), new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
     shadow.rotation.x = -Math.PI / 2;
     this.scene.add(group, shadow);
-    const v = { group, tilt, mesh, flame, glow, shield, shadow, ch, x: 0, y: 0, z: 0, heading: 0, bob: Math.random() * 6 };
+    const v = { group, tilt, mesh, flame, glow, shield, shadow, ch, pal, crumbs: [], x: 0, y: 0, z: 0, heading: 0, bob: Math.random() * 6 };
     this.racers[r.index] = v;
     return v;
   }
@@ -489,6 +548,13 @@ export class World {
       const hover = 0.78 + Math.sin(this.time * 5 + v.bob) * 0.06 - (r.landT > 0 ? Math.sin(Math.PI * (1 - r.landT / 0.35)) * 0.26 : 0);
       v.x = P.x; v.y = P.y + (r.mode === 'drive' ? hover : 0); v.z = P.z; v.heading = P.heading;
       v.group.position.set(v.x, v.y, v.z);
+      if (v.pal) v.pal.position.y = 0.14 + Math.abs(Math.sin(this.time * 6 + v.bob)) * (r.air ? 0.3 : 0.07);   // the co-pilot bounces, more in the air
+      // breadcrumbs behind the ship, for the train of rescued eggs to follow
+      if (r.mode === 'drive') {
+        const c0 = v.crumbs[0], gap = c0 ? Math.hypot(v.x - c0.x, v.z - c0.z) : 99;
+        if (c0 && gap > 6) v.crumbs.length = 0;                   // respawned somewhere else: start a fresh trail
+        if (gap > 0.25) { v.crumbs.unshift({ x: v.x, y: v.y, z: v.z }); if (v.crumbs.length > 44) v.crumbs.length = 44; }
+      }
       v.group.rotation.y = -P.heading;
       // lean and pitch are eased, so a one-step hop over a bump cannot flick the ship for a frame
       if (r.mode !== 'drive' || !v.posed) { v.roll = P.roll; v.pitch = P.pitch; v.posed = r.mode === 'drive'; }
@@ -531,6 +597,7 @@ export class World {
           1.5 + Math.random(), -1.4 - Math.random(), 0.8, 3.5, 0.42, FALL_COLORS[Math.floor(Math.random() * FALL_COLORS.length)], { drag: 0.1 });
       }
     }
+    this.updateEggs(race, dt);
     this.fx.update(dt); this.bits.update(dt);
   }
 
@@ -556,6 +623,8 @@ export class World {
       return;
     }
     if (!v || !r) return;
+    if (e.type === 'egg') { this.burst(v.x, v.y + 0.3, v.z, 12, 7, [EGG_SPARK[e.tier], '#ffffff'], 0.45, 1.0, { drag: 2, up: 3 }); return; }
+    if (e.type === 'eggdrop') { this.burst(v.x, v.y + 0.5, v.z, 16, 9, ['#fff1d0', '#ffffff'], 0.6, 1.3, { gravity: 10, up: 5 }); return; }
     if (e.type === 'bash') {
       // a shockwave ring spreading out flat from the basher
       for (let i = 0; i < 44; i++) { const a = i / 44 * 6.283; this.fx.spawn(v.x + Math.cos(a) * 1.2, v.y + 0.1, v.z + Math.sin(a) * 1.2, Math.cos(a) * 17, 0.4, Math.sin(a) * 17, 0.3, 1.5, i % 2 ? '#ffe26a' : '#ffffff', { drag: 3 }); }
@@ -638,14 +707,21 @@ export class World {
   }
 
   // A small picture of a character for the menus.
-  portrait(ch, size = 200) {
+  portrait(ch, size = 200) { return this.icon(buildRacerGeometry(ch), size, 4.3, 2.5, 0.2, 0.78); }
+  // A small picture of a hatchling, framed to suit its shape.
+  critterIcon(c, size = 160) {
+    const f = { dino: [2.9, 1.6, 0, 0.72, 0.35], crawler: [2.25, 1.3, 0, 0.22, 0.3], crawdad: [2.2, 1.3, 0, 0.26, -0.15], turtle: [2.2, 1.35, 0, 0.3, -0.35], frog: [2.1, 1.3, 0.05, 0.32, -0.75] }[c.kind] || [2.3, 1.4, -0.08, 0.45, -0.75];
+    return this.icon(buildCritterGeometry(c), size, f[0], f[1], f[2], f[3], f[4]);
+  }
+  // Renders one model to a transparent PNG data URL. Camera sits at (dist, height, dist) looking at (lookX, lookY, 0);
+  // turn is how far the model is turned toward the camera.
+  icon(geo, size, dist, height, lookX, lookY, turn = -0.75) {
     const rdr = this.renderer, scene = new THREE.Scene();
     scene.add(new THREE.HemisphereLight('#ffffff', '#b07a45', 2.6));
     const sun = new THREE.DirectionalLight('#fff0cf', 2.4); sun.position.set(0.6, 1, 0.8); scene.add(sun);
-    const geo = buildRacerGeometry(ch);
-    const mesh = new THREE.Mesh(geo, this.racerMat); mesh.rotation.y = -0.75; scene.add(mesh);
+    const mesh = new THREE.Mesh(geo, this.racerMat); mesh.rotation.y = turn; scene.add(mesh);
     const cam = new THREE.PerspectiveCamera(27, 1, 0.1, 50);
-    cam.position.set(4.3, 2.5, 4.3); cam.lookAt(0.2, 0.78, 0);
+    cam.position.set(dist, height, dist); cam.lookAt(lookX, lookY, 0);
     const prevTarget = rdr.getRenderTarget();
     const rt = new THREE.WebGLRenderTarget(size, size, { samples: 4 });
     rt.texture.colorSpace = THREE.SRGBColorSpace;

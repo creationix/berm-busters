@@ -58,7 +58,7 @@
   #build { position: absolute; right: calc(10px + var(--sar)); bottom: calc(8px + var(--sab)); font-size: 12px; color: #fff; opacity: .8; text-shadow: 0 1px 3px #000; }
   #credit { position: absolute; left: calc(10px + var(--sal)); bottom: calc(8px + var(--sab)); font-size: 12px; opacity: .85; text-shadow: 0 1px 3px #000; }
 
-  .panel { background: var(--card); border: 2px solid var(--line); border-radius: 22px; padding: clamp(10px, 2.4vmin, 22px); max-width: min(980px, 100%); max-height: 100%;
+  .panel { background: var(--card); border: 2px solid var(--line); border-radius: 22px; padding: clamp(10px, 2.4vmin, 22px); max-width: min(980px, 100%); max-height: 100%; overflow-x: hidden;
            overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; box-shadow: 0 16px 50px rgba(0,0,0,.5); }
   .panel h2 { margin: 0 0 1.6vmin; font-size: clamp(20px, 4.4vmin, 32px); color: var(--gold); font-weight: 900; }
   #setup .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 1.6vmin; }
@@ -94,6 +94,35 @@
   #results tr.me td { background: rgba(255,210,63,.18); }
   #results tr.me td:first-child { border-radius: 10px 0 0 10px; } #results tr.me td:last-child { border-radius: 0 10px 10px 0; }
 
+  /* ---------- eggs, hatching and the Den ---------- */
+  .egg { display: inline-block; width: 1em; height: 1.3em; border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%; vertical-align: -0.25em;
+         background: radial-gradient(circle at 34% 28%, #fff 0, var(--c, #fff1d0) 62%); box-shadow: inset -0.1em -0.14em 0 rgba(0,0,0,.14), 0 0 .5em var(--c, #fff1d0); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(84px, 19vmin, 132px), 1fr)); gap: 8px; margin: 1vmin 0 2vmin; width: min(86vw, 760px); max-width: 100%; }
+  .card { position: relative; background: #1d4638; border: 3px solid transparent; border-radius: 16px; padding: 6px 4px 8px; min-height: clamp(104px, 23vmin, 160px);
+          display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .card img { width: 86%; aspect-ratio: 1; display: block; pointer-events: none; }
+  .card b { font-size: clamp(11px, 2.2vmin, 15px); line-height: 1.15; }
+  .card i { font-style: normal; font-size: clamp(9px, 1.7vmin, 12px); font-weight: 700; }
+  .card .egg { font-size: clamp(40px, 10vmin, 64px); animation: wobble .5s ease-in-out infinite; }
+  .card.waiting .egg { animation: none; opacity: .75; }
+  .card.out { animation: hatchpop .45s ease-out; border-color: var(--c); box-shadow: 0 0 18px var(--c); }
+  .card .tag { position: absolute; top: -8px; right: -6px; background: var(--red); color: #fff; font-size: 11px; font-weight: 900; padding: 2px 7px; border-radius: 9px; transform: rotate(8deg); }
+  .card .tag.shiny { left: -6px; right: auto; background: var(--gold); color: #2a1800; transform: rotate(-8deg); }
+  .card.shiny img, .den .card.hasShiny img { filter: drop-shadow(0 0 6px #ffe26a) saturate(1.5) brightness(1.12); }
+  @keyframes wobble { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+  @keyframes hatchpop { 0% { transform: scale(.3); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  .den .card.unknown img { filter: brightness(0) opacity(.45); }
+  .den .card.unknown b { color: var(--dim); }
+  .den .card.found { cursor: pointer; }
+  .den .card.pal { border-color: var(--gold); background: #2c6a54; }
+  .den .card .count { position: absolute; top: 4px; left: 8px; font-size: 12px; font-weight: 800; color: var(--dim); }
+  .den .card .star { position: absolute; top: 2px; right: 6px; color: var(--gold); font-size: 16px; }
+  #denHelp { font-size: clamp(11px, 2.1vmin, 14px); color: var(--dim); line-height: 1.5; max-width: 720px; margin: 0 auto; text-align: left; }
+  #hatchNote { font-weight: 800; min-height: 1.4em; margin: 0 0 1.5vmin; }
+  .hud .eggs { position: absolute; left: calc(14px + var(--sal)); top: calc(8px + var(--sat) + clamp(40px, 11.5vmin, 88px)); font-size: clamp(15px, 3.8vmin, 28px); }
+  .hud .eggs.bump { animation: hatchpop .3s ease-out; }
+  .hud .eggs.full { color: var(--gold); }
+
   /* ---------- in-race display ---------- */
   .hud { position: absolute; pointer-events: none; z-index: 10; overflow: hidden; font-weight: 900; text-shadow: 0 2px 0 rgba(0,0,0,.55), 0 0 10px rgba(0,0,0,.4); }
   .hud .place { position: absolute; left: calc(12px + var(--sal)); top: calc(8px + var(--sat)); font-size: clamp(38px, 11vmin, 84px); line-height: 1; color: var(--gold); -webkit-text-stroke: 1.5px #7a3d00; }
@@ -122,7 +151,7 @@
   .touch button.bash { font-size: clamp(13px, 4.2vmin, 28px); border-color: #ffe26a; background: rgba(255,120,30,.6); }
   .touch button.bash.cool { opacity: .38; }
   .touch.r { flex-wrap: wrap-reverse; justify-content: flex-end; max-width: 52%; }
-  .hud .kos { position: absolute; left: calc(14px + var(--sal)); top: calc(8px + var(--sat) + clamp(40px, 11.5vmin, 88px)); font-size: clamp(14px, 3.6vmin, 26px); }
+  .hud .kos { position: absolute; left: calc(14px + var(--sal)); top: calc(8px + var(--sat) + clamp(40px, 11.5vmin, 88px) + clamp(22px, 5.4vmin, 40px)); font-size: clamp(14px, 3.6vmin, 26px); }
   .hud .msg.long { font-size: clamp(24px, 8vmin, 72px); top: 28%; }
   .tip { font-size: 12px; color: var(--dim); line-height: 1.3; max-width: 330px; }
   .tip b { color: var(--ink); }
@@ -145,6 +174,7 @@
     <p class="tag">Hover-ship racing on the Devil's Den trails</p>
     <button id="playBtn" class="btn big">RACE!</button>
     <div class="row">
+      <button id="denBtn" class="btn alt small"></button>
       <button id="sfxBtn" class="btn alt small"></button>
       <button id="musicBtn" class="btn alt small"></button>
       <a class="btn alt small" href="check.html" style="text-decoration:none;display:inline-flex;align-items:center">Device check</a>
@@ -184,7 +214,31 @@
       <h2 id="resultsTitle">Results</h2>
       <table id="resultsTable"></table>
       <p id="resultsNote" style="margin:0 0 2vmin;font-weight:700;color:var(--dim);font-size:clamp(12px,2.4vmin,16px)"></p>
-      <div class="row"><button id="againBtn" class="btn big">Race again</button><button id="menuBtn" class="btn alt">Menu</button></div>
+      <div class="row"><button id="hatchBtn" class="btn big"></button><button id="againBtn" class="btn alt">Race again</button><button id="menuBtn" class="btn alt">Menu</button></div>
+    </div>
+  </div>
+
+  <div id="hatch" class="screen">
+    <div class="panel">
+      <h2 id="hatchTitle">Hatching!</h2>
+      <div id="hatchCards" class="cards"></div>
+      <p id="hatchNote"></p>
+      <div class="row" id="hatchBtns"><button id="hatchAgainBtn" class="btn big">Race again</button><button id="hatchDenBtn" class="btn alt">My Den</button><button id="hatchMenuBtn" class="btn alt">Menu</button></div>
+    </div>
+  </div>
+
+  <div id="den" class="screen">
+    <div class="panel den">
+      <div class="head" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:1vmin"><button id="denBackBtn" class="btn alt">Back</button><h2 id="denTitle" style="margin:0">My Den</h2><span style="width:70px"></span></div>
+      <p id="denNote" style="margin:0 0 1vmin;font-weight:700;color:var(--dim);font-size:clamp(12px,2.3vmin,15px)"></p>
+      <div id="denCards" class="cards"></div>
+      <p id="denHelp">
+        <span class="egg" style="--c:#fff1d0"></span> <b>Trail eggs</b> lie along the trail.
+        <span class="egg" style="--c:#59d4ff"></span> <b>Sky eggs</b> hang in the air after ramps.
+        <span class="egg" style="--c:#c77dff"></span> <b>Cliff eggs</b> sit just past the edge: Daredevils only.
+        <span class="egg" style="--c:#ffd23f"></span> A <b>golden egg</b> is the prize for winning.
+        Eggs still on board at the finish hatch. Get knocked off and you drop some.
+      </p>
     </div>
   </div>
 

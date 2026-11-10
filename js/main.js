@@ -2,14 +2,15 @@
 
 import { buildTrack } from './track.js';
 import { FOSSIL_FLATS } from './courses.js';
-import { Race, TICK, V_MAX, ASSIST } from './sim.js';
+import { Race, TICK, V_MAX, ASSIST, EGG, MAX_EGGS } from './sim.js';
 import { World } from './render.js';
 import { CHARACTERS, characterById } from './models.js';
+import { CRITTERS, critterById, hatch, loadDen, saveDen, addToDen, denCount, RARITY, RARITY_COLOR, EGG_NAME } from './critters.js';
 import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './input.js';
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-10.4';
+const BUILD = '2026-11-10.5';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -29,6 +30,10 @@ const keyboard = new Keyboard();
 const tilt = new Tilt();
 const portraits = {};
 for (const ch of CHARACTERS) portraits[ch.id] = world.portrait(ch);
+const critterPics = {};
+for (const c of CRITTERS) critterPics[c.id] = world.critterIcon(c);
+const den = loadDen();                 // every hatchling rescued so far, saved on this device
+const EGG_CSS = ['#fff1d0', '#59d4ff', '#c77dff', '#ffd23f'];
 
 let coarse = matchMedia('(pointer: coarse)').matches;
 addEventListener('touchstart', () => { if (!coarse) { coarse = true; refreshSetup(); for (const h of G.huds) h.el.classList.add('touching'); } }, { passive: true });
@@ -53,8 +58,9 @@ function startRace() {
   others.forEach((c, i) => entries.push({ name: c.name, character: c.id, human: false, skill: base + i * stepUp }));
   // On Easy the computer riders only bash each other, never the player.
   G.race = new Race(track, entries, { seed: (Date.now() & 0xffff) + 1, aiBashHumans: { easy: 0, normal: 0.45, fast: 1.2 }[settings.rivals] || 0 });
-  world.clearRacers(); for (const r of G.race.racers) world.addRacer(r);
-  G.human = 0;
+  // The player's chosen hatchling rides along as co-pilot.
+  world.clearRacers(); for (const r of G.race.racers) world.addRacer(r, r.human && den.buddy ? critterById(den.buddy) : null);
+  G.human = 0; G.pendingHatch = null;
   const view = world.makeView(0);
   G.views = [view];
   clearHuds();
@@ -78,7 +84,7 @@ function makeHud(view, racer) {
   const r = view.rect;
   el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
   el.innerHTML = `<div class="flash"></div>
-    <div class="place"></div><div class="kos"></div><div class="lap"></div><canvas class="map" width="150" height="150"></canvas>
+    <div class="place"></div><div class="eggs"></div><div class="kos"></div><div class="lap"></div><canvas class="map" width="150" height="150"></canvas>
     <div class="msg"></div><button class="pauseBtn" aria-label="Pause">❚❚</button>
     <div class="tiltDot"><i></i></div>
     <div class="touch l"><button data-touch="left" aria-label="Steer left">◀</button><button data-touch="right" aria-label="Steer right">▶</button></div>
@@ -86,7 +92,7 @@ function makeHud(view, racer) {
   $('huds').appendChild(el);
   const q = s => el.querySelector(s);
   const hud = { el, view, racer, place: q('.place'), lap: q('.lap'), map: q('.map'), msg: q('.msg'), flash: q('.flash'), tiltDot: q('.tiltDot i'), pad: new TouchPad(el), lastPlace: '', lastLap: '', wasAir: false,
-    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null };
+    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null, eggs: q('.eggs'), lastEggs: '' };
   q('.pauseBtn').addEventListener('click', () => pause());
   return hud;
 }
@@ -135,6 +141,14 @@ function updateHud(hud, race) {
   hud.flash.classList.toggle('on', r.boostT > 0);
   if (r.kos !== hud.lastKos) { hud.lastKos = r.kos; hud.kos.textContent = r.kos ? '💥 × ' + r.kos : ''; }
   hud.bashBtn.classList.toggle('cool', r.bashT > 0);
+  // rescued eggs on board, shown as a row of little eggs in their own colours
+  const eggKey = r.eggs.join('');
+  if (eggKey !== hud.lastEggs) {
+    hud.lastEggs = eggKey;
+    hud.eggs.innerHTML = r.eggs.map(t => `<span class="egg" style="--c:${EGG_CSS[t]}"></span>`).join(' ');
+    hud.eggs.classList.toggle('full', r.eggs.length >= MAX_EGGS);
+    hud.eggs.classList.remove('bump'); void hud.eggs.offsetWidth; hud.eggs.classList.add('bump');
+  }
   if (tilt.active) hud.tiltDot.style.left = (50 + tilt.steer * 50) + '%';
   if (G.frame % 3 === 0) drawMap(hud, race);
 }
@@ -154,11 +168,23 @@ function handleEvent(e, race) {
     case 'bump': sound.bump(); break;
     case 'scrape': sound.scrape(); break;
     case 'shield': sound.shield(); break;
+    case 'egg':
+      sound.egg(e.count, e.tier);
+      if (e.stolen) say(hud, 'YOINK!', 'gold', 0.8);
+      else if (e.tier === EGG.EDGE) say(hud, 'CLIFF EGG!', 'gold', 0.9);
+      else if (e.tier === EGG.AIR) say(hud, 'SKY EGG!', '', 0.8);
+      else if (e.count === MAX_EGGS) say(hud, 'FULL NEST!', 'gold', 0.9);
+      break;
+    case 'eggdrop': sound.eggDrop(); hud.dropped = e.n; break;
     case 'bash': sound.bash(); break;
     case 'knocked': sound.knocked(); say(hud, 'WHOA!', 'red', 0.7); break;
     case 'knockout': sound.knockout(); say(hud, 'KNOCKOUT!', 'gold', 1.2); break;
     case 'fall': sound.fall(); hud.gotBy = e.by >= 0 ? race.racers[e.by].name : null; break;
-    case 'explode': sound.explode(); say(hud, hud.gotBy ? hud.gotBy + ' got you!' : 'BOOM!', 'red', 1.5); hud.gotBy = null; break;
+    case 'explode': {
+      sound.explode();
+      const lost = hud.dropped ? ` −${hud.dropped} 🥚` : '';
+      say(hud, (hud.gotBy ? hud.gotBy + ' got you!' : 'BOOM!') + lost, 'red', 1.6); hud.gotBy = null; hud.dropped = 0; break;
+    }
     case 'respawn': sound.respawn(); hud.racer._snap = true; break;
     case 'lap': { const final = e.lap === race.laps; sound.lap(final); if (final) sound.setFinalLap(true); say(hud, final ? 'FINAL LAP!' : 'LAP ' + e.lap, final ? 'gold' : '', 1.3); break; }
     case 'finish': sound.finish(e.place); say(hud, e.place + ORD(e.place) + '!', 'gold', 2.6); hud.view.orbit = true; break;
@@ -243,10 +269,87 @@ function showResults() {
   const bits = [];
   if (me.kos) bits.push(`You knocked ${me.kos} rider${me.kos === 1 ? '' : 's'} off the trail`);
   if (nemesis) bits.push(`${nemesis.name} knocked you off ${most === 1 ? 'once' : most + ' times'}`);
+  // Eggs: everything still on board at the line, plus one for finishing and a prize egg for the podium.
+  // So every rider, wherever they finish, gets something to hatch.
+  const eggs = (me.rescued || []).slice();
+  eggs.push(EGG.COMMON);
+  if (me.place === 1) eggs.push(EGG.GOLD); else if (me.place <= 3) eggs.push(EGG.AIR);
+  const carried = eggs.length - (me.place <= 3 ? 2 : 1);
+  bits.unshift(`You rescued ${carried} egg${carried === 1 ? '' : 's'}`);
   $('resultsNote').textContent = bits.join(' · ');
+  // Decide the hatchlings and save them now, so they are safe even if the hatching screen is skipped.
+  G.pendingHatch = eggs.map(t => { const h = hatch(t); return Object.assign(h, addToDen(den, h)); });
+  saveDen(den); labelDen();
+  $('hatchBtn').innerHTML = `Hatch ${eggs.length} egg${eggs.length === 1 ? '' : 's'}! ` + eggs.map(t => `<span class="egg" style="--c:${EGG_CSS[t]};font-size:.62em"></span>`).join('');
+  $('hatchBtn').style.display = '';
   for (const h of G.huds) h.el.style.display = 'none';
   show('results');
 }
+
+// ---------- hatching and the Den ----------
+let hatchTimer = null;
+function showHatch() {
+  const list = G.pendingHatch; if (!list) return;
+  G.pendingHatch = null;
+  $('hatchBtn').style.display = 'none';
+  show('hatch');
+  $('hatchTitle').textContent = 'Hatching!';
+  $('hatchNote').textContent = 'Tap to hurry them up';
+  $('hatchBtns').style.visibility = 'hidden';
+  const box = $('hatchCards');
+  box.innerHTML = list.map(h => `<div class="card waiting" style="--c:${RARITY_COLOR[h.critter.rarity]}"><span class="egg" style="--c:${EGG_CSS[h.tier]}"></span><i>${EGG_NAME[h.tier]}</i></div>`).join('');
+  let i = 0;
+  const next = () => {
+    clearTimeout(hatchTimer);
+    if (i >= list.length) return;
+    const h = list[i], card = box.children[i];
+    if (card.classList.contains('waiting')) {           // first the egg wobbles and cracks...
+      card.classList.remove('waiting'); sound.crack();
+      hatchTimer = setTimeout(next, 800);
+      return;
+    }
+    card.className = 'card out' + (h.shiny ? ' shiny' : '');   // ...then out it pops
+    card.innerHTML = `<img src="${critterPics[h.critter.id]}" alt=""><b>${h.critter.name}</b><i style="color:${RARITY_COLOR[h.critter.rarity]}">${RARITY[h.critter.rarity]}</i>` +
+      (h.isNew ? '<span class="tag">NEW!</span>' : '') + (h.shiny ? '<span class="tag shiny">★ SHINY</span>' : '');
+    sound.hatch(h.critter.rarity, h.isNew, h.shiny);
+    i++;
+    if (i < list.length) hatchTimer = setTimeout(next, 650);
+    else {
+      const fresh = list.filter(x => x.isNew).length, shiny = list.filter(x => x.shiny).length;
+      $('hatchTitle').textContent = fresh ? `${fresh} new friend${fresh === 1 ? '' : 's'}!` : 'Welcome home!';
+      $('hatchNote').textContent = `Your Den: ${denCount(den)} of ${CRITTERS.length} kinds found` + (shiny ? ' · ★ a shiny one!' : '');
+      $('hatchBtns').style.visibility = '';
+    }
+  };
+  G.hatchNext = next;
+  hatchTimer = setTimeout(next, 500);
+}
+$('hatchCards').addEventListener('click', () => { if (G.hatchNext) G.hatchNext(); });
+
+function labelDen() { $('denBtn').textContent = `My Den ${denCount(den)}/${CRITTERS.length}`; }
+function showDen(from) {
+  G.denFrom = from || G.screen || 'menu';
+  $('denTitle').textContent = `My Den  ${denCount(den)}/${CRITTERS.length}`;
+  $('denNote').textContent = den.hatched ? `${den.hatched} hatched so far. Tap a friend to make them your co-pilot.` : 'Rescue eggs in a race and they will hatch here.';
+  $('denCards').innerHTML = CRITTERS.map(c => {
+    const n = den.found[c.id] || 0, col = RARITY_COLOR[c.rarity];
+    if (!n) return `<div class="card unknown"><img src="${critterPics[c.id]}" alt=""><b>???</b><i style="color:${col}">${RARITY[c.rarity]}</i></div>`;
+    return `<div class="card found${den.buddy === c.id ? ' pal' : ''}${den.shiny[c.id] ? ' hasShiny' : ''}" data-id="${c.id}"><span class="count">×${n}</span>${den.shiny[c.id] ? '<span class="star">★</span>' : ''}` +
+      `<img src="${critterPics[c.id]}" alt=""><b>${c.name}</b><i style="color:${col}">${den.buddy === c.id ? 'Co-pilot' : RARITY[c.rarity]}</i></div>`;
+  }).join('');
+  show('den');
+}
+$('denCards').addEventListener('click', e => {
+  const card = e.target.closest('.card.found'); if (!card) return;
+  den.buddy = card.dataset.id; saveDen(den); sound.click(); showDen(G.denFrom);
+});
+$('denBtn').addEventListener('click', () => { sound.unlock(); sound.click(); showDen('menu'); });
+$('denBackBtn').addEventListener('click', () => { sound.click(); show(G.denFrom === 'hatch' ? 'hatch' : 'menu'); });
+$('hatchBtn').addEventListener('click', () => { sound.click(); showHatch(); });
+$('hatchAgainBtn').addEventListener('click', () => { sound.click(); startRace(); });
+$('hatchDenBtn').addEventListener('click', () => { sound.click(); showDen('hatch'); });
+$('hatchMenuBtn').addEventListener('click', () => quit());
+labelDen();
 
 function refreshSetup() {
   for (const el of $('riders').children) el.classList.toggle('on', el.dataset.id === settings.character);
@@ -290,7 +393,8 @@ function advance() {
   if (G.screen === 'menu') $('playBtn').click();
   else if (G.screen === 'setup') go();
   else if (G.screen === 'pause') resume();
-  else if (G.screen === 'results') $('againBtn').click();
+  else if (G.screen === 'results') { if (G.pendingHatch) showHatch(); else $('againBtn').click(); }
+  else if (G.screen === 'hatch') { if ($('hatchBtns').style.visibility === 'hidden') G.hatchNext(); else startRace(); }
 }
 function cycleRider(dir) {
   if (G.screen !== 'setup') return;

@@ -63,6 +63,22 @@ export class Sound {
   jump() { this.tone(NOTE(4), 0.28, { to: NOTE(16), vol: 0.14 }); }
   land() { this.tone(110, 0.16, { to: 60, vol: 0.3 }); this.noise(0.14, { freq: 500, vol: 0.12 }); }
   bump() { this.tone(180, 0.1, { to: 110, type: 'triangle', vol: 0.22 }); }
+  // Eggs: each one scooped rings a step higher; special eggs add a sparkle.
+  egg(count, tier) {
+    this.tone(NOTE(12 + count * 2), 0.16, { type: 'triangle', vol: 0.26 });
+    this.tone(NOTE(19 + count * 2), 0.22, { vol: 0.16, delay: 0.06 });
+    if (tier) for (let i = 0; i < 3; i++) this.tone(NOTE(24 + i * 4 + tier * 2), 0.14, { vol: 0.12, delay: 0.12 + i * 0.05 });
+  }
+  eggDrop() { for (const [i, n] of [14, 10, 5].entries()) this.tone(NOTE(n), 0.16, { type: 'triangle', vol: 0.22, delay: i * 0.09 }); }
+  crack() { this.noise(0.05, { freq: 3200, filter: 'highpass', vol: 0.2 }); this.noise(0.04, { freq: 2600, filter: 'highpass', vol: 0.16, delay: 0.3 }); this.noise(0.05, { freq: 3000, filter: 'highpass', vol: 0.2, delay: 0.55 }); }
+  // A hatchling pops out: a brighter, longer flourish the rarer it is, with extra sparkle for a new or shiny one.
+  hatch(rarity, isNew, shiny) {
+    const tune = [[12, 16], [12, 16, 19], [12, 16, 19, 24], [12, 16, 19, 24, 28, 31]][rarity] || [12, 16];
+    tune.forEach((n, i) => this.tone(NOTE(n), i === tune.length - 1 ? 0.4 : 0.14, { type: 'triangle', vol: 0.22, delay: i * 0.07 }));
+    this.noise(0.08, { freq: 2400, filter: 'highpass', vol: 0.14 });
+    if (isNew) this.tone(NOTE(tune[tune.length - 1] + 12), 0.5, { vol: 0.12, delay: tune.length * 0.07 });
+    if (shiny) for (let i = 0; i < 6; i++) this.tone(NOTE(31 + (i % 3) * 5), 0.12, { vol: 0.1, delay: 0.25 + i * 0.06 });
+  }
   bash() { this.tone(250, 0.24, { to: 70, type: 'triangle', vol: 0.34 }); this.noise(0.26, { freq: 800, to: 2800, vol: 0.15, filter: 'bandpass' }); }
   knocked() { this.tone(NOTE(17), 0.32, { to: NOTE(0), type: 'triangle', vol: 0.24 }); }
   knockout() { for (const [i, n] of [19, 24, 28].entries()) this.tone(NOTE(n), 0.24, { type: 'triangle', vol: 0.22, delay: i * 0.07 }); }

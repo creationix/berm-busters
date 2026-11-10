@@ -33,6 +33,44 @@ function mulberry32(a) {
 
 export const ASSIST = { off: 0, some: 0.45, lots: 0.8 };
 
+// ---------- eggs ----------
+// A storm has washed eggs out of their nests along the trail. Riders scoop them up by driving
+// through them and carry them home; the ones still on board at the finish get to hatch.
+export const EGG = { COMMON: 0, AIR: 1, EDGE: 2, GOLD: 3 };
+export const MAX_EGGS = 6;         // how many a ship can carry
+const EGG_RESPAWN = 25;           // seconds before a scooped egg is replaced
+const LOOSE_EGG_TIME = 12;        // dropped eggs lie on the trail this long
+
+function layEggs(track, rng) {
+  const eggs = [], L = track.length;
+  const add = (s, d, h, tier) => eggs.push({ s: track.wrapS(s), d, h, tier, alive: true, timer: 0, loose: false });
+  // Ordinary eggs: one every 85 m or so, wandering from side to side.
+  const n = Math.round(L / 85);
+  for (let k = 0; k < n; k++) {
+    const s = 26 + (k + rng() * 0.5) * (L - 30) / n, hw = track.halfWidthAt(s);
+    add(s, (rng() * 2 - 1) * (hw - 2.6), 0.9, EGG.COMMON);
+  }
+  // Sky eggs: hanging in the air after each ramp, for anyone who takes it at speed.
+  for (const rp of track.ramps) {
+    if (rp.type === 'kicker') {
+      // placed along the arc a ship flies at a good speed
+      const v = 27, slope = 2 * rp.h / rp.len;
+      for (const [x, d] of [[8, -1.2], [15, 1.2]]) { const tt = x / v; add(rp.s + x, d, Math.max(1.8, rp.h + slope * v * tt - GRAV / 2 * tt * tt + 0.9), EGG.AIR); }
+    } else add(rp.s + 5, 0, 2.4, EGG.AIR);
+  }
+  // Cliff eggs: just beyond an open edge, out of reach of the safety field. Daredevils only.
+  let since = 99;
+  for (let i = 0; i < track.N; i += 2) {
+    const s = i * track.step; since += 2 * track.step;
+    for (const side of [-1, 1]) {
+      if (track.edgeAt(s, side) !== EDGE.CLIFF || since < 48) continue;
+      if (track.edgeAt(s - 12, side) !== EDGE.CLIFF || track.edgeAt(s + 12, side) !== EDGE.CLIFF) continue;
+      add(s, side * (track.halfWidthAt(s) + 0.6), 0.9, EGG.EDGE); since = 0;
+    }
+  }
+  return eggs;
+}
+
 export class Race {
   // entries: [{ name, character, human, daredevil, assist (0..1), autoGo, skill }]
   constructor(track, entries, opts = {}) {
@@ -64,10 +102,49 @@ export class Race {
         steer: 0, throttle: 0, lane: (this.rng() - 0.5) * 0.9, laneT: 2 + this.rng() * 3,
         scrapeT: 0, bumpT: 0, shieldT: 0, shieldSide: 0, landT: 0,
         bashT: 0, kv: 0, knockT: 0, knockedBy: -1, kos: 0, koBy: {}, wipeouts: 0, wantBash: false,
+        eggs: [], rescued: null, eggsLost: 0, eggsStolen: 0,
         wx: 0, wy: 0, wz: 0, wvx: 0, wvy: 0, wvz: 0, wpsi: 0, spin: 0,
       };
     });
+    this.eggs = opts.eggs === false ? [] : layEggs(track, this.rng);
     this.rank();
+  }
+
+  // ----- eggs -----
+  stepEggs() {
+    for (let i = this.eggs.length - 1; i >= 0; i--) {
+      const e = this.eggs[i];
+      if (e.loose) { e.timer -= TICK; if (e.timer <= 0) this.eggs.splice(i, 1); }
+      else if (!e.alive) { e.timer -= TICK; if (e.timer <= 0) e.alive = true; }
+    }
+  }
+  // Scoop up any egg the ship is passing through.
+  scoop(r) {
+    if (r.eggs.length >= MAX_EGGS) return;
+    const t = this.track, up = r.air ? r.y - t.heightAt(r.s) : 0;
+    for (let i = this.eggs.length - 1; i >= 0; i--) {
+      const e = this.eggs[i];
+      if (!e.alive) continue;
+      if (Math.abs(t.deltaS(e.s, r.s)) > 1.8 || Math.abs(e.d - r.d) > 1.35 || Math.abs(up + 0.9 - e.h) > 1.3) continue;
+      r.eggs.push(e.tier);
+      const stolen = e.loose && e.from !== r.index;
+      if (stolen) r.eggsStolen++;
+      if (e.loose) this.eggs.splice(i, 1); else { e.alive = false; e.timer = EGG_RESPAWN; }
+      this.emit('egg', r, { tier: e.tier, count: r.eggs.length, stolen });
+      if (r.eggs.length >= MAX_EGGS) return;
+    }
+  }
+  // Knocked off or fallen: some of the eggs spill onto the trail for anyone to grab.
+  dropEggs(r, n) {
+    n = Math.min(n, r.eggs.length);
+    if (!n) return;
+    const t = this.track;
+    for (let i = 0; i < n; i++) {
+      const s = t.wrapS(r.safeS + 5 + i * 3.5), hw = t.halfWidthAt(s);
+      this.eggs.push({ s, d: (i % 2 ? 1 : -1) * (0.8 + this.rng() * (hw - 3.6)), h: 0.9, tier: r.eggs.pop(), alive: true, loose: true, timer: LOOSE_EGG_TIME, from: r.index });
+    }
+    r.eggsLost += n;
+    this.emit('eggdrop', r, { n });
   }
 
   emit(type, r, extra) { this.events.push(Object.assign({ type, r: r ? r.index : -1 }, extra)); }
@@ -88,6 +165,7 @@ export class Race {
     }
     if (this.state === 'finished') return;
     this.time += TICK;
+    this.stepEggs();
     for (const r of this.racers) this.stepRacer(r, inputs[r.index]);
     this.collide();
     this.rank();
@@ -98,7 +176,7 @@ export class Race {
       this.endTimer -= TICK;
       if (this.endTimer <= 0) {
         // Everyone still out on the trail is placed in running order.
-        for (const r of this.order) if (!r.finished) { r.finished = true; r.place = ++this.finishCount; r.finishTime = 0; }
+        for (const r of this.order) if (!r.finished) { r.finished = true; r.place = ++this.finishCount; r.finishTime = 0; r.rescued = r.eggs.slice(); }
         this.state = 'finished';
         this.emit('raceover', null);
       }
@@ -266,6 +344,7 @@ export class Race {
       r.s -= L; r.lapsDone++;
       if (r.lapsDone >= this.laps && !r.finished) {
         r.finished = true; r.finishTime = this.time; r.place = ++this.finishCount;
+        r.rescued = r.eggs.slice();                  // every egg still on board at the line is safe
         this.emit('finish', r, { place: r.place });
       } else if (r.lapsDone > 0) this.emit('lap', r, { lap: r.lapsDone + 1 });
     }
@@ -314,6 +393,8 @@ export class Race {
 
     // --- boost pads ---
     if (!r.air && r.boostT < 0.5 && t.boostAt(r.s, r.d)) { r.boostT = BOOST_TIME; this.emit('boost', r); }
+
+    if (!r.finished) this.scoop(r);
   }
 
   // Keep a racer inside a sideways limit, turning them back along the trail instead of stopping them.
@@ -340,6 +421,7 @@ export class Race {
     r.fallFloor = r.wy - 14;
     r.mode = 'fall'; r.timer = punted && !cliff ? 0.72 : punted ? 1.25 : FALL_TIME; r.air = false; r.boostT = 0; r.kv = 0; r.knockT = 0;
     this.emit('fall', r, { by: punted ? r.knockedBy : -1 });
+    if (!r.finished) this.dropEggs(r, punted ? 3 : 2);
   }
 
   // Knocked clean off the trail by another rider.

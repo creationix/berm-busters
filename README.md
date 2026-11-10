@@ -4,7 +4,7 @@ A hover-ship racing game for kids, set on the mountain bike trails of Devil's De
 
 Play: https://creationix.github.io/berm-busters/
 
-**Status:** first playable. One course (Fossil Flats), a solo race against seven computer riders, with touch, tilt, keyboard and gamepad controls. Split-screen and play between devices come next. A device check page (screen fit, tilt, gamepads, device-to-device connection) is at `check.html`.
+**Status:** first playable. One course (Fossil Flats), a solo race against seven computer riders, with touch, tilt, keyboard and gamepad controls. Bash rivals off the trail, rescue eggs along the way, and hatch them afterwards into baby Ozark animals for your Den. Split-screen and play between devices come next. A device check page (screen fit, tilt, gamepads, device-to-device connection) is at `check.html`.
 
 ## How it is built
 

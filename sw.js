@@ -1,7 +1,7 @@
 // Offline support: everything the app needs is cached on first visit.
 // Bump CACHE when the list of files changes.
 const PREFIX = 'berm-busters-';   // other apps share this origin: only ever touch caches with this prefix
-const CACHE = PREFIX + 'v4';
+const CACHE = PREFIX + 'v5';
 const ASSETS = [
   './',
   './index.html',
@@ -13,6 +13,7 @@ const ASSETS = [
   './js/sim.js',
   './js/render.js',
   './js/models.js',
+  './js/critters.js',
   './js/input.js',
   './js/audio.js',
   './js/tilt.js',
