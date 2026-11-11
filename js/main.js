@@ -10,7 +10,7 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-10.6';
+const BUILD = '2026-11-11.1';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -92,7 +92,7 @@ function makeHud(view, racer) {
   $('huds').appendChild(el);
   const q = s => el.querySelector(s);
   const hud = { el, view, racer, place: q('.place'), lap: q('.lap'), map: q('.map'), msg: q('.msg'), flash: q('.flash'), tiltDot: q('.tiltDot i'), pad: new TouchPad(el), lastPlace: '', lastLap: '', wasAir: false,
-    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null, eggs: q('.eggs'), lastEggs: '' };
+    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null, eggs: q('.eggs'), lastEggs: null };
   q('.pauseBtn').addEventListener('click', () => pause());
   return hud;
 }
@@ -140,14 +140,19 @@ function updateHud(hud, race) {
   if (txt !== hud.lastLap) { hud.lastLap = txt; hud.lap.innerHTML = `${lap}<small>${time}</small>`; }
   hud.flash.classList.toggle('on', r.boostT > 0);
   if (r.kos !== hud.lastKos) { hud.lastKos = r.kos; hud.kos.textContent = r.kos ? '💥 × ' + r.kos : ''; }
-  hud.bashBtn.classList.toggle('cool', r.bashT > 0);
   // rescued eggs on board, shown as a row of little eggs in their own colours
   const eggKey = r.eggs.join('');
   if (eggKey !== hud.lastEggs) {
     hud.lastEggs = eggKey;
-    hud.eggs.innerHTML = r.eggs.map(t => `<span class="egg" style="--c:${EGG_CSS[t]}"></span>`).join(' ');
+    const tier = Math.max(-1, ...r.eggs), next = r.eggs.indexOf(tier);
+    hud.eggs.innerHTML = r.eggs.map((t, i) => `<span class="egg${i === next ? ' next' : ''}" style="--c:${EGG_CSS[t]}" title="${EGG_NAME[t]}${i === next ? ' (next bash)' : ''}"></span>`).join(' ');
     hud.eggs.classList.toggle('full', r.eggs.length >= MAX_EGGS);
     hud.eggs.classList.remove('bump'); void hud.eggs.offsetWidth; hud.eggs.classList.add('bump');
+    hud.bashBtn.classList.toggle('empty', tier < 0);
+    hud.bashBtn.setAttribute('aria-disabled', String(tier < 0));
+    hud.bashBtn.setAttribute('aria-label', tier < 0 ? 'Bash: collect an egg first' : `Bash: explode one ${EGG_NAME[tier]}`);
+    hud.bashBtn.innerHTML = `BASH<small>${tier < 0 ? 'No eggs' : EGG_NAME[tier]}</small>`;
+    hud.bashBtn.style.setProperty('--egg-color', tier < 0 ? '#ffe26a' : EGG_CSS[tier]);
   }
   if (tilt.active) hud.tiltDot.style.left = (50 + tilt.steer * 50) + '%';
   if (G.frame % 3 === 0) drawMap(hud, race);
@@ -176,7 +181,7 @@ function handleEvent(e, race) {
       else if (e.count === MAX_EGGS) say(hud, 'FULL NEST!', 'gold', 0.9);
       break;
     case 'eggdrop': sound.eggDrop(); hud.dropped = e.n; break;
-    case 'bash': sound.bash(); break;
+    case 'bash': sound.bash(e.power); break;
     case 'knocked': sound.knocked(); say(hud, 'WHOA!', 'red', 0.7); break;
     case 'knockout': sound.knockout(); say(hud, 'KNOCKOUT!', 'gold', 1.2); break;
     case 'fall': sound.fall(); hud.gotBy = e.by >= 0 ? race.racers[e.by].name : null; break;

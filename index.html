@@ -122,6 +122,7 @@
   .hud .eggs { position: absolute; left: calc(14px + var(--sal)); top: calc(8px + var(--sat) + clamp(40px, 11.5vmin, 88px)); font-size: clamp(15px, 3.8vmin, 28px); }
   .hud .eggs.bump { animation: hatchpop .3s ease-out; }
   .hud .eggs.full { color: var(--gold); }
+  .hud .egg.next { outline: 2px solid #fff; outline-offset: 3px; }
 
   /* ---------- in-race display ---------- */
   .hud { position: absolute; pointer-events: none; z-index: 10; overflow: hidden; font-weight: 900; text-shadow: 0 2px 0 rgba(0,0,0,.55), 0 0 10px rgba(0,0,0,.4); }
@@ -148,8 +149,9 @@
   .touch button.brake { font-size: clamp(11px, 3.2vmin, 20px); border-color: rgba(255,120,120,.8); }
   .touch { align-items: flex-end; }
   .touch button.brake { width: clamp(50px, 14vmin, 92px); height: clamp(50px, 14vmin, 92px); font-size: clamp(9px, 2.4vmin, 15px); }
-  .touch button.bash { font-size: clamp(13px, 4.2vmin, 28px); border-color: #ffe26a; background: rgba(255,120,30,.6); }
-  .touch button.bash.cool { opacity: .38; }
+  .touch button.bash { font-size: clamp(13px, 4.2vmin, 28px); border-color: var(--egg-color, #ffe26a); background: rgba(255,120,30,.6); }
+  .touch button.bash small { display: block; font-size: .45em; }
+  .touch button.bash.empty { opacity: .38; }
   .touch.r { flex-wrap: wrap-reverse; justify-content: flex-end; max-width: 52%; }
   .hud .kos { position: absolute; left: calc(14px + var(--sal)); top: calc(8px + var(--sat) + clamp(40px, 11.5vmin, 88px) + clamp(22px, 5.4vmin, 40px)); font-size: clamp(14px, 3.6vmin, 26px); }
   .hud .msg.long { font-size: clamp(24px, 8vmin, 72px); top: 28%; }
@@ -189,12 +191,12 @@
       <div class="cols">
         <div id="riders"></div>
         <div id="opts">
-          <div class="opt" id="optSteer"><span>Steering<small>Buttons, or tilt the device like a wheel</small></span><div class="seg" data-key="steer"><button data-v="buttons">Buttons</button><button data-v="tilt">Tilt</button></div></div>
+          <div class="opt" id="optSteer"><span>Steering<small>Buttons, or small tilts like a steering wheel</small></span><div class="seg" data-key="steer"><button data-v="buttons">Buttons</button><button data-v="tilt">Tilt</button></div></div>
           <div class="opt"><span>Daredevil<small>No safety field: fly off the mountain and go BOOM</small></span><div class="seg" data-key="daredevil"><button data-v="off">Off</button><button data-v="on" class="danger">On</button></div></div>
           <div class="opt"><span>Steering help</span><div class="seg" data-key="assist"><button data-v="lots">Lots</button><button data-v="some">Some</button><button data-v="off">Off</button></div></div>
           <div class="opt"><span>Auto-go<small>The ship speeds up by itself</small></span><div class="seg" data-key="autoGo"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
           <div class="opt"><span>Rivals</span><div class="seg" data-key="rivals"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div></div>
-          <div class="tip">BASH shoves rivals sideways. Catch them near an edge and they go flying! <b>Space</b>, gamepad <b>X</b>, or the BASH button.</div>
+          <div class="tip">Each BASH explodes your best egg to shove rivals sideways. Better eggs make bigger, stronger blasts! Collect eggs, then press <b>Space</b>, gamepad <b>X</b>, or BASH. One egg per press; no cooldown.</div>
           <div id="setupNote" style="font-size:12.5px;color:var(--gold);min-height:1.2em"></div>
         </div>
       </div>
@@ -237,7 +239,7 @@
         <span class="egg" style="--c:#59d4ff"></span> <b>Sky eggs</b> hang in the air after ramps.
         <span class="egg" style="--c:#c77dff"></span> <b>Cliff eggs</b> sit just past the edge: Daredevils only.
         <span class="egg" style="--c:#ffd23f"></span> A <b>golden egg</b> is the prize for winning.
-        Eggs still on board at the finish hatch. Get knocked off and you drop some.
+        BASH uses your best egg: Trail &lt; Sky &lt; Cliff &lt; Golden in blast power. Eggs still on board at the finish hatch. Get knocked off and you drop some.
       </p>
     </div>
   </div>

@@ -82,7 +82,10 @@ export class Sound {
     if (isNew) this.tone(NOTE(tune[tune.length - 1] + 12), 0.5, { vol: 0.12, delay: tune.length * 0.07 });
     if (shiny) for (let i = 0; i < 6; i++) this.tone(NOTE(31 + (i % 3) * 5), 0.12, { vol: 0.1, delay: 0.25 + i * 0.06 });
   }
-  bash() { this.tone(250, 0.24, { to: 70, type: 'triangle', vol: 0.34 }); this.noise(0.26, { freq: 800, to: 2800, vol: 0.15, filter: 'bandpass' }); }
+  bash(power = 1) {
+    this.tone(250 / power, 0.24 * power, { to: 70 / power, type: 'triangle', vol: 0.34 });
+    this.noise(0.26 * power, { freq: 800, to: 2800 / power, vol: 0.15, filter: 'bandpass' });
+  }
   knocked() { this.tone(NOTE(17), 0.32, { to: NOTE(0), type: 'triangle', vol: 0.24 }); }
   knockout() { for (const [i, n] of [19, 24, 28].entries()) this.tone(NOTE(n), 0.24, { type: 'triangle', vol: 0.22, delay: i * 0.07 }); }
   scrape() { this.noise(0.12, { freq: 1800, vol: 0.07, filter: 'bandpass' }); }

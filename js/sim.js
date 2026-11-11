@@ -15,7 +15,6 @@ const BOOST_TIME = 1.3, BOOST_GAIN = 1.32;
 const FALL_TIME = 1.0, RESPAWN_DELAY = 1.5, INVULN_TIME = 2.0;
 const SAFE_MARGIN = 0.9;          // safety field keeps protected riders this far inside the edge
 const ROUGH_WIDTH = 5;            // how far Daredevils can stray into the forest
-const BASH_COOLDOWN = 2.2;        // seconds between bashes
 const BASH_REACH_S = 3.6, BASH_REACH_D = 4.4;   // how close (along / across the trail) a ship must be to get shoved
 const KNOCK_SPEED = 11;           // sideways shove, m/s, fading over about half a second
 const KNOCK_TIME = 0.9;           // while shoved, nothing holds you on the trail: not even the safety field
@@ -40,6 +39,7 @@ export const EGG = { COMMON: 0, AIR: 1, EDGE: 2, GOLD: 3 };
 export const MAX_EGGS = 6;         // how many a ship can carry
 const EGG_RESPAWN = 25;           // seconds before a scooped egg is replaced
 const LOOSE_EGG_TIME = 12;        // dropped eggs lie on the trail this long
+const eggPower = tier => 1 + tier * 0.4;  // trail < sky < cliff < golden: more reach and knockback
 
 function layEggs(track, rng) {
   const eggs = [], L = track.length;
@@ -101,7 +101,7 @@ export class Race {
         boostT: 0, mode: 'drive', timer: 0, invuln: 0, offroad: false, safeS: s,
         steer: 0, throttle: 0, lane: (this.rng() - 0.5) * 0.9, laneT: 2 + this.rng() * 3,
         scrapeT: 0, bumpT: 0, shieldT: 0, shieldSide: 0, landT: 0,
-        bashT: 0, kv: 0, knockT: 0, knockedBy: -1, kos: 0, koBy: {}, wipeouts: 0, wantBash: false,
+        bashHeld: false, kv: 0, knockT: 0, knockedBy: -1, kos: 0, koBy: {}, wipeouts: 0,
         eggs: [], rescued: null, eggsLost: 0, eggsStolen: 0,
         wx: 0, wy: 0, wz: 0, wvx: 0, wvy: 0, wvz: 0, wpsi: 0, spin: 0,
       };
@@ -226,12 +226,13 @@ export class Race {
 
   // Computer riders bash when someone is alongside and close enough to an open edge to go over it.
   aiWantsBash(r, hw) {
-    if (r.bashT > 0 || r.finished || r.invuln > 0 || this.time < 4) return false;
+    if (!r.eggs.length || r.finished || r.invuln > 0 || this.time < 4) return false;
     const t = this.track;
+    const power = eggPower(Math.max(...r.eggs));
     for (const o of this.racers) {
       if (o === r || o.mode !== 'drive' || o.invuln > 0 || o.finished) continue;
       const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
-      if (Math.abs(ds) > 2.8 || Math.abs(dd) < 0.6 || Math.abs(dd) > 3.6) continue;
+      if (Math.abs(ds) > 2.8 * power || Math.abs(dd) < 0.6 || Math.abs(dd) > 3.6 * power || Math.abs(o.y - r.y) > 2.2 * power) continue;
       const dir = dd > 0 ? 1 : -1;
       if (t.edgeAt(o.s, dir) === EDGE.WALL || hw - dir * o.d > 3.4) continue;      // would not go over: save it
       const rate = o.human ? this.aiBashHumans : 0.9;
@@ -240,28 +241,33 @@ export class Race {
     return false;
   }
 
-  // A bash shoves every ship close by sideways, away from the basher.
+  // Explode the best egg on board, shoving nearby ships away. No egg means no bash.
   bash(r) {
+    if (!r.eggs.length || r.mode !== 'drive' || r.finished || r.invuln > 0) return;
     const t = this.track;
-    r.bashT = BASH_COOLDOWN;
+    const tier = Math.max(...r.eggs), power = eggPower(tier);
+    r.eggs.splice(r.eggs.indexOf(tier), 1);
     let hits = 0;
     for (const o of this.racers) {
-      if (o === r || o.mode !== 'drive' || o.invuln > 0) continue;
+      if (o === r || o.mode !== 'drive' || o.invuln > 0 || o.finished) continue;
       if (!r.human && o.human && this.aiBashHumans <= 0) continue;    // on Easy, people are never caught in a computer rider's bash
       const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
-      if (Math.abs(ds) > BASH_REACH_S || Math.abs(dd) > BASH_REACH_D || Math.abs(o.y - r.y) > 2.2) continue;
+      if (Math.abs(ds) > BASH_REACH_S * power || Math.abs(dd) > BASH_REACH_D * power || Math.abs(o.y - r.y) > 2.2 * power) continue;
       const dir = dd > 0 ? 1 : dd < 0 ? -1 : (o.index > r.index ? 1 : -1);
-      o.kv = dir * KNOCK_SPEED; o.knockT = KNOCK_TIME; o.knockedBy = r.index;
+      o.kv = dir * KNOCK_SPEED * power; o.knockT = KNOCK_TIME; o.knockedBy = r.index;
       o.th = clamp(o.th + dir * 0.22, -TH_MAX, TH_MAX); o.v *= 0.92;
       r.kv -= dir * 2.5;                                                        // a little recoil
       hits++;
       this.emit('knocked', o, { by: r.index, side: dir });
     }
-    this.emit('bash', r, { hits });
+    this.emit('bash', r, { hits, tier, power });
   }
 
   stepRacer(r, inp) {
     const t = this.track, L = t.length, dt = TICK;
+    // Track presses even while falling or respawning: holding bash never spends more eggs.
+    const bashDown = !!(inp && inp.bash), bashPress = bashDown && !r.bashHeld;
+    r.bashHeld = bashDown;
     if (r.mode === 'dead') {
       r.timer -= dt;
       if (r.timer <= 0) this.respawn(r);
@@ -281,13 +287,13 @@ export class Race {
     r.invuln = Math.max(0, r.invuln - dt);
     r.scrapeT = Math.max(0, r.scrapeT - dt); r.bumpT = Math.max(0, r.bumpT - dt);
     r.shieldT = Math.max(0, r.shieldT - dt); r.landT = Math.max(0, r.landT - dt);
-    r.bashT = Math.max(0, r.bashT - dt); r.knockT = Math.max(0, r.knockT - dt);
+    r.knockT = Math.max(0, r.knockT - dt);
     if (r.knockT <= 0) r.knockedBy = -1;
 
     let steer = 0, throttle = 0, brake = 0, bash = false;
     if (!r.human || r.finished) ({ steer, throttle, brake, bash } = this.ai(r));
     else if (inp) {
-      bash = !!inp.bash;
+      bash = bashPress;
       steer = clamp(inp.steer || 0, -1, 1);
       brake = clamp(inp.brake || 0, 0, 1);
       throttle = r.autoGo ? 1 : clamp(inp.throttle || 0, 0, 1);
@@ -296,7 +302,7 @@ export class Race {
     if (r.knockT > 0) steer *= 0.35;                 // hard to steer while reeling from a shove
     r.steer += (steer - r.steer) * 0.3;
     r.throttle = throttle;
-    if (bash && r.bashT <= 0 && r.invuln <= 0) this.bash(r);
+    if (bash) this.bash(r);
 
     const k = t.kappaAt(r.s), hw = t.halfWidthAt(r.s);
 

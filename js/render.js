@@ -626,9 +626,11 @@ export class World {
     if (e.type === 'egg') { this.burst(v.x, v.y + 0.3, v.z, 12, 7, [EGG_SPARK[e.tier], '#ffffff'], 0.45, 1.0, { drag: 2, up: 3 }); return; }
     if (e.type === 'eggdrop') { this.burst(v.x, v.y + 0.5, v.z, 16, 9, ['#fff1d0', '#ffffff'], 0.6, 1.3, { gravity: 10, up: 5 }); return; }
     if (e.type === 'bash') {
-      // a shockwave ring spreading out flat from the basher
-      for (let i = 0; i < 44; i++) { const a = i / 44 * 6.283; this.fx.spawn(v.x + Math.cos(a) * 1.2, v.y + 0.1, v.z + Math.sin(a) * 1.2, Math.cos(a) * 17, 0.4, Math.sin(a) * 17, 0.3, 1.5, i % 2 ? '#ffe26a' : '#ffffff', { drag: 3 }); }
-      this.fx.spawn(v.x, v.y + 0.3, v.z, 0, 0, 0, 0.22, 7, '#ffd23f', { grow: 1.6 });
+      // Egg-coloured shell fragments and a shockwave that grows with the egg's power.
+      const power = e.power, color = EGG_COLORS[e.tier];
+      this.burst(v.x, v.y + 0.5, v.z, 12 + e.tier * 6, 8 * power, [color, '#ffffff'], 0.6, 0.45, { solid: true, gravity: 14, up: 4 });
+      for (let i = 0; i < 44; i++) { const a = i / 44 * 6.283; this.fx.spawn(v.x + Math.cos(a) * 1.2, v.y + 0.1, v.z + Math.sin(a) * 1.2, Math.cos(a) * 17 * power, 0.4, Math.sin(a) * 17 * power, 0.3, 1.5 * power, i % 2 ? color : '#ffffff', { drag: 3 }); }
+      this.fx.spawn(v.x, v.y + 0.3, v.z, 0, 0, 0, 0.22, 7 * power, color, { grow: 1.6 });
     } else if (e.type === 'knocked') {
       this.burst(v.x, v.y + 0.6, v.z, 14, 9, ['#ffffff', '#ff4d5e', '#ffe26a'], 0.45, 1.2, { drag: 2 });
     } else if (e.type === 'boost') this.burst(v.x, v.y, v.z, 16, 9, ['#ffe26a', '#7dffff'], 0.5, 1.1, { drag: 2 });

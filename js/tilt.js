@@ -14,11 +14,12 @@ export function screenAngle() {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const FULL_STEER_DEG = 15;        // small tilts reach full lock, well before the screen rotates
 
 // ax, ay: accelerationIncludingGravity in device axes. angleDeg: screen rotation.
 // state.sign remembers which sign convention the device uses. Returns steer in -1..1
 // (positive = steer right) plus the screen-space components for diagnostics.
-export function gravityToSteer(ax, ay, angleDeg, state, maxDeg = 30) {
+export function gravityToSteer(ax, ay, angleDeg, state, maxDeg = FULL_STEER_DEG) {
   const t = angleDeg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
   let right = ax * c - ay * s;
   let up = ax * s + ay * c;
@@ -39,7 +40,7 @@ export class Tilt {
     this.events = 0;
     this.active = false;
     this.invert = false;
-    this.maxDeg = 30;
+    this.maxDeg = FULL_STEER_DEG;
     this._on = e => this._motion(e);
   }
   static get supported() { return typeof DeviceMotionEvent !== 'undefined'; }
@@ -72,6 +73,6 @@ export class Tilt {
     let s = this.invert ? -r.steer : r.steer;
     if (Math.abs(s) < 0.06) s = 0;           // small dead zone so "straight" is easy to hold
     this.rawSteer = s;
-    this.steer += (s - this.steer) * 0.35;   // light smoothing against hand shake
+    this.steer += (s - this.steer) * 0.8;    // respond in 1–2 sensor updates, with a little filtering for hand shake
   }
 }
