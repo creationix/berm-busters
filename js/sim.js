@@ -96,9 +96,10 @@ export class Race {
         index: i, name: e.name, character: e.character, human: !!e.human,
         daredevil: !!e.daredevil, assist: e.assist != null ? e.assist : ASSIST.some, autoGo: e.autoGo !== false,
         skill: e.skill || 1, catchup: 1,
-        s, d: col ? 2.3 : -2.3, th: 0, va: 0, v: 0, y: track.heightAt(s), vy: 0, air: false, airTime: 0,
+        s, d: col ? 2.3 : -2.3, th: 0, va: 0, v: 0, y: track.groundAt(s, col ? 2.3 : -2.3), vy: 0, air: false, airTime: 0,
         lapsDone: -1, progress: s - L, pos: slot + 1, finished: false, finishTime: 0, place: 0,
         boostT: 0, mode: 'drive', timer: 0, invuln: 0, offroad: false, safeS: s,
+        route: null, safeRoute: null, routeChoices: {}, boostHeld: false, boostCharge: 0.35, drifting: false, driftT: 0,
         steer: 0, throttle: 0, lane: (this.rng() - 0.5) * 0.9, laneT: 2 + this.rng() * 3,
         scrapeT: 0, bumpT: 0, shieldT: 0, shieldSide: 0, landT: 0,
         bashHeld: false, kv: 0, knockT: 0, knockedBy: -1, kos: 0, koBy: {}, wipeouts: 0,
@@ -107,7 +108,40 @@ export class Race {
       };
     });
     this.eggs = opts.eggs === false ? [] : layEggs(track, this.rng);
+    if (opts.eggs !== false) for (const b of track.branches) for (const f of [0.3, 0.65]) {
+      this.eggs.push({ s: b.fromS + (b.toS - b.fromS) * f, d: 0, h: 0.9, tier: b.hidden ? EGG.GOLD : EGG.AIR,
+        route: b.id, hidden: !!b.hidden, alive: true, timer: 0, loose: false });
+    }
     this.rank();
+  }
+
+  path(r) { return this.track.path(r.route); }
+
+  separation(a, b) {
+    const p = this.path(a).toWorld(a.s, a.d), q = this.path(b).toWorld(b.s, b.d);
+    const x = q.x - p.x, z = q.z - p.z;
+    return { ds: x * Math.cos(p.psi) + z * Math.sin(p.psi), dd: x * -Math.sin(p.psi) + z * Math.cos(p.psi) };
+  }
+
+  // Keep the main lap coordinate for ranking, but travel each branch at its physical length.
+  syncRoute(r, steer = 0, enter = true) {
+    const old = this.path(r);
+    if (r.route) {
+      if (r.s < old.toS) return;
+      r.route = null;
+    } else if (enter && !r.finished && !r.air) {
+      const b = this.track.branches.find(b => {
+        const ahead = b.fromS - r.s;
+        return ahead >= 0 && ahead <= Math.max(1, r.v * TICK * 1.5) &&
+          (r.human ? b.hidden ? r.d * b.side > this.track.halfWidthAt(r.s) - 1.8 : steer * b.side > 0.2 || r.d * b.side > 1.3 : r.routeChoices[`${r.lapsDone}:${b.id}`]);
+      });
+      if (!b) return;
+      r.route = b.id; r.s = b.fromS;
+      this.emit('route', r, { name: b.name, hidden: !!b.hidden });
+    } else return;
+    const angle = old.psiAt(r.s) - this.path(r).psiAt(r.s);
+    const delta = Math.atan2(Math.sin(angle), Math.cos(angle));
+    r.th = clamp(r.th + delta, -TH_MAX, TH_MAX); r.va = clamp(r.va + delta, -TH_MAX, TH_MAX);
   }
 
   // ----- eggs -----
@@ -121,11 +155,12 @@ export class Race {
   // Scoop up any egg the ship is passing through.
   scoop(r) {
     if (r.eggs.length >= MAX_EGGS) return;
-    const t = this.track, up = r.air ? r.y - t.heightAt(r.s) : 0;
+    const t = this.path(r), w = t.toWorld(r.s, r.d);
     for (let i = this.eggs.length - 1; i >= 0; i--) {
       const e = this.eggs[i];
       if (!e.alive) continue;
-      if (Math.abs(t.deltaS(e.s, r.s)) > 1.8 || Math.abs(e.d - r.d) > 1.35 || Math.abs(up + 0.9 - e.h) > 1.3) continue;
+      const p = this.track.path(e.route).toWorld(e.s, e.d);
+      if (Math.hypot(p.x - w.x, p.z - w.z) > 2.1 || Math.abs(r.y + 0.9 - p.y - e.h) > 1.3) continue;
       r.eggs.push(e.tier);
       const stolen = e.loose && e.from !== r.index;
       if (stolen) r.eggsStolen++;
@@ -138,10 +173,11 @@ export class Race {
   dropEggs(r, n) {
     n = Math.min(n, r.eggs.length);
     if (!n) return;
-    const t = this.track;
+    const t = this.track.path(r.safeRoute);
     for (let i = 0; i < n; i++) {
-      const s = t.wrapS(r.safeS + 5 + i * 3.5), hw = t.halfWidthAt(s);
-      this.eggs.push({ s, d: (i % 2 ? 1 : -1) * (0.8 + this.rng() * (hw - 3.6)), h: 0.9, tier: r.eggs.pop(), alive: true, loose: true, timer: LOOSE_EGG_TIME, from: r.index });
+      const s = t.wrapS(r.safeS + 5 + i * 3.5), route = r.safeRoute && s <= t.toS ? r.safeRoute : null;
+      const hw = this.track.path(route).halfWidthAt(s);
+      this.eggs.push({ s, route, d: (i % 2 ? 1 : -1) * (0.8 + this.rng() * Math.max(0, hw - 3.6)), h: 0.9, tier: r.eggs.pop(), alive: true, loose: true, timer: LOOSE_EGG_TIME, from: r.index });
     }
     r.eggsLost += n;
     this.emit('eggdrop', r, { n });
@@ -154,7 +190,7 @@ export class Race {
     this.events.length = 0;
     this.tick++;
     // Remember where everyone was, so the display can blend between steps (see pose).
-    for (const r of this.racers) { r.ps = r.s; r.pd = r.d; r.pth = r.th; r.py = r.y; r.psteer = r.steer; r.pmode = r.mode; r.pwx = r.wx; r.pwy = r.wy; r.pwz = r.wz; r.pspin = r.spin; }
+    for (const r of this.racers) { r.proute = r.route; r.ps = r.s; r.pd = r.d; r.pth = r.th; r.py = r.y; r.psteer = r.steer; r.pmode = r.mode; r.pwx = r.wx; r.pwy = r.wy; r.pwz = r.wz; r.pspin = r.spin; }
     if (this.state === 'countdown') {
       this.countdown -= TICK;
       const c = Math.ceil(this.countdown);
@@ -168,6 +204,7 @@ export class Race {
     this.stepEggs();
     for (const r of this.racers) this.stepRacer(r, inputs[r.index]);
     this.collide();
+    for (const r of this.racers) if (r.mode === 'drive') r.y = Math.max(r.y, this.path(r).groundAt(r.s, r.d));
     this.rank();
     const humans = this.racers.filter(r => r.human);
     const done = humans.length ? humans.every(r => r.finished) : this.finishCount >= Math.min(3, this.racers.length);
@@ -203,16 +240,21 @@ export class Race {
   }
 
   ai(r) {
-    const t = this.track;
+    const t = this.path(r), scale = t.speedScale(r.s);
     r.laneT -= TICK;
     if (r.laneT <= 0) { r.lane = (this.rng() - 0.5) * 1.1; r.laneT = 3 + this.rng() * 4; }
     const hw = t.halfWidthAt(r.s);
-    const k = t.kappaAt(r.s), kAhead = t.kappaAt(r.s + 14);
+    const k = t.kappaAt(r.s), kAhead = t.kappaAt(r.s + 14 * scale);
     let dT = r.lane * (hw - 2) + clamp(kAhead * 60, -1, 1) * (hw - 2.2) * 0.6;   // drift to the inside of the next bend
     for (const o of this.racers) {
       if (o === r || o.mode !== 'drive') continue;
-      const ahead = t.deltaS(o.s, r.s);
-      if (ahead > 0 && ahead < 13 && Math.abs(o.d - r.d) < 2.3) dT += (r.d >= o.d ? 1 : -1) * 2.6;
+      const { ds, dd } = this.separation(r, o);
+      if (ds > 0 && ds < 13 && Math.abs(dd) < 2.3) dT += (dd <= 0 ? 1 : -1) * 2.6;
+    }
+    if (!r.route) for (const b of this.track.branches) if (b.fromS - r.s > 0 && b.fromS - r.s < 24) {
+      const key = `${r.lapsDone}:${b.id}`;
+      if (!(key in r.routeChoices)) r.routeChoices[key] = this.rng() < (b.hidden ? 0.08 : 0.45);
+      if (r.routeChoices[key]) dT = b.side * (hw - 1.5);
     }
     dT = clamp(dT, -(hw - 1.8), hw - 1.8);
     const thT = clamp((dT - r.d) * 0.11, -0.4, 0.4);
@@ -221,7 +263,8 @@ export class Race {
     const speedF = clamp(r.v / 8, 0.3, 1);
     const steer = clamp(want / (W_MAX * speedF), -1, 1);
     const vCorner = (W_MAX * 0.85) / Math.max(Math.abs(kAhead), Math.abs(k), 1e-4);
-    return { steer, throttle: r.v > vCorner ? 0 : 1, brake: 0, bash: this.aiWantsBash(r, hw) };
+    return { steer, throttle: r.v > vCorner ? 0 : 1, brake: 0, bash: this.aiWantsBash(r, hw),
+      drift: !r.route && Math.abs(steer) > 0.35 && Math.abs(k) > 0.008, boost: Math.abs(kAhead) < 0.006 && r.boostCharge > 0.65 };
   }
 
   // Computer riders bash when someone is alongside and close enough to an open edge to go over it.
@@ -231,10 +274,10 @@ export class Race {
     const power = eggPower(Math.max(...r.eggs));
     for (const o of this.racers) {
       if (o === r || o.mode !== 'drive' || o.invuln > 0 || o.finished) continue;
-      const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
+      const { ds, dd } = this.separation(r, o);
       if (Math.abs(ds) > 2.8 * power || Math.abs(dd) < 0.6 || Math.abs(dd) > 3.6 * power || Math.abs(o.y - r.y) > 2.2 * power) continue;
       const dir = dd > 0 ? 1 : -1;
-      if (t.edgeAt(o.s, dir) === EDGE.WALL || hw - dir * o.d > 3.4) continue;      // would not go over: save it
+      if (this.path(o).edgeAt(o.s, dir) === EDGE.WALL || this.path(o).halfWidthAt(o.s) - dir * o.d > 3.4) continue;      // would not go over: save it
       const rate = o.human ? this.aiBashHumans : 0.9;
       if (this.rng() < rate * TICK) return true;
     }
@@ -251,7 +294,7 @@ export class Race {
     for (const o of this.racers) {
       if (o === r || o.mode !== 'drive' || o.invuln > 0 || o.finished) continue;
       if (!r.human && o.human && this.aiBashHumans <= 0) continue;    // on Easy, people are never caught in a computer rider's bash
-      const ds = t.deltaS(o.s, r.s), dd = o.d - r.d;
+      const { ds, dd } = this.separation(r, o);
       if (Math.abs(ds) > BASH_REACH_S * power || Math.abs(dd) > BASH_REACH_D * power || Math.abs(o.y - r.y) > 2.2 * power) continue;
       const dir = dd > 0 ? 1 : dd < 0 ? -1 : (o.index > r.index ? 1 : -1);
       o.kv = dir * KNOCK_SPEED * power; o.knockT = KNOCK_TIME; o.knockedBy = r.index;
@@ -264,10 +307,13 @@ export class Race {
   }
 
   stepRacer(r, inp) {
-    const t = this.track, L = t.length, dt = TICK;
+    let t = this.path(r);
+    const L = this.track.length, dt = TICK;
     // Track presses even while falling or respawning: holding bash never spends more eggs.
     const bashDown = !!(inp && inp.bash), bashPress = bashDown && !r.bashHeld;
     r.bashHeld = bashDown;
+    const boostDown = !!(inp && inp.boost), boostPress = boostDown && !r.boostHeld;
+    r.boostHeld = boostDown;
     if (r.mode === 'dead') {
       r.timer -= dt;
       if (r.timer <= 0) this.respawn(r);
@@ -278,7 +324,9 @@ export class Race {
       r.wx += r.wvx * dt; r.wy += r.wvy * dt; r.wz += r.wvz * dt;
       r.wvx *= 0.985; r.wvz *= 0.985; r.spin += dt * 7;
       r.timer -= dt;
-      if (r.timer <= 0 || r.wy < r.fallFloor) {
+      const land = this.track.getTerrain().heightAt(r.wx, r.wz);
+      if (r.timer <= 0 || r.wy < r.fallFloor || r.wy <= land + 0.2) {
+        r.wy = Math.max(r.wy, land + 0.2);
         r.mode = 'dead'; r.timer = RESPAWN_DELAY; r.v = 0;
         this.emit('explode', r, { x: r.wx, y: r.wy, z: r.wz });
       }
@@ -290,10 +338,10 @@ export class Race {
     r.knockT = Math.max(0, r.knockT - dt);
     if (r.knockT <= 0) r.knockedBy = -1;
 
-    let steer = 0, throttle = 0, brake = 0, bash = false;
-    if (!r.human || r.finished) ({ steer, throttle, brake, bash } = this.ai(r));
+    let steer = 0, throttle = 0, brake = 0, bash = false, drift = false, boost = false;
+    if (!r.human || r.finished) ({ steer, throttle, brake, bash, drift, boost } = this.ai(r));
     else if (inp) {
-      bash = bashPress;
+      bash = bashPress; drift = !!inp.drift; boost = boostPress;
       steer = clamp(inp.steer || 0, -1, 1);
       brake = clamp(inp.brake || 0, 0, 1);
       throttle = r.autoGo ? 1 : clamp(inp.throttle || 0, 0, 1);
@@ -304,7 +352,17 @@ export class Race {
     r.throttle = throttle;
     if (bash) this.bash(r);
 
-    const k = t.kappaAt(r.s), hw = t.halfWidthAt(r.s);
+    this.syncRoute(r, steer); t = this.path(r);
+    const scale = t.speedScale(r.s), k = t.kappaAt(r.s), hw = t.halfWidthAt(r.s);
+    r.drifting = drift && Math.abs(steer) > 0.2 && r.v > 12 && !r.air && !r.offroad && r.invuln <= 0 && !r.finished;
+    if (r.drifting) {
+      r.driftT += dt;
+      r.boostCharge = Math.min(1, r.boostCharge + dt * 0.42 * Math.abs(steer));
+    } else r.driftT = 0;
+    if (boost && r.boostCharge >= 0.25 && r.boostT <= 0 && !r.finished && r.invuln <= 0) {
+      r.boostT = 0.6 + r.boostCharge * 1.4; r.boostCharge = 0;
+      r.v = Math.max(r.v, V_MAX * 1.12); this.emit('boost', r, { manual: true });
+    }
 
     // --- speed ---
     let vmax = V_MAX * r.skill * r.catchup;
@@ -337,13 +395,13 @@ export class Race {
     r.th += w * dt - k * sdot0 * dt;
     r.th = clamp(r.th, -TH_MAX, TH_MAX);
     r.va -= k * sdot0 * dt;
-    r.va += (r.th - r.va) * (1 - Math.exp(-(r.air ? GRIP_AIR : GRIP_GROUND) * dt));
+    r.va += (r.th - (r.drifting ? Math.sign(steer) * 0.28 : 0) - r.va) * (1 - Math.exp(-(r.air ? GRIP_AIR : r.drifting ? 3.2 : GRIP_GROUND) * dt));
     r.va = clamp(r.va, -TH_MAX, TH_MAX);
 
     // --- move ---
-    const groundBefore = t.heightAt(r.s);
+    const groundBefore = t.groundAt(r.s, r.d);
     const sdot = r.v * Math.cos(r.va) / Math.max(0.3, 1 - r.d * k);
-    r.s += sdot * dt;
+    r.s += sdot * dt * scale;
     r.d += r.v * Math.sin(r.va) * dt + r.kv * dt;
     r.kv *= Math.exp(-4 * dt);
     if (r.s >= L) {
@@ -356,8 +414,9 @@ export class Race {
     }
     r.progress = r.lapsDone * L + r.s;
 
-    // --- hills, ramps and air ---
-    const ground = t.heightAt(r.s);
+    // --- hills, ramps and air: y is always a physical world height, including the bank. ---
+    this.syncRoute(r, 0, false); t = this.path(r);
+    const ground = t.groundAt(r.s, r.d);
     const vyGround = (ground - groundBefore) / dt;
     if (!r.air) {
       // If the ground drops away faster than gravity can follow, we are flying.
@@ -395,10 +454,13 @@ export class Race {
       if (ad > hw + 0.2 && !r.air) r.offroad = true;
       if (ad > hw + ROUGH_WIDTH) this.slide(r, side, hw + ROUGH_WIDTH, 0.97, false);
     }
-    if (!r.air && ad <= hw) r.safeS = r.s;
+    if (!r.air && ad <= hw) { r.safeS = r.s; r.safeRoute = r.route; }
+    r.y = Math.max(r.y, t.groundAt(r.s, r.d));
+    // Landing cleanly and collecting boost pads also refill the reserve a little.
+    if (!r.air && r.landT > 0.34) r.boostCharge = Math.min(1, r.boostCharge + 0.08);
 
     // --- boost pads ---
-    if (!r.air && r.boostT < 0.5 && t.boostAt(r.s, r.d)) { r.boostT = BOOST_TIME; this.emit('boost', r); }
+    if (!r.air && r.boostT < 0.5 && t.boostAt(r.s, r.d)) { r.boostT = BOOST_TIME; r.boostCharge = Math.min(1, r.boostCharge + 0.2); this.emit('boost', r); }
 
     if (!r.finished) this.scoop(r);
   }
@@ -415,7 +477,8 @@ export class Race {
 
   // punted: knocked off by a bash, so they are flung up and out rather than just dropping.
   startFall(r, side, punted = false, cliff = true) {
-    const t = this.track;
+    const t = this.path(r);
+    r.drifting = false; r.driftT = 0;
     const w = t.toWorld(r.s, r.d);
     const h = w.psi + r.va;
     r.wx = w.x; r.wz = w.z; r.wy = Math.max(r.y, w.y);
@@ -439,10 +502,11 @@ export class Race {
   }
 
   respawn(r) {
-    const t = this.track;
+    r.route = r.safeRoute;
+    const t = this.path(r);
     r.s = r.safeS > 6.5 ? r.safeS - 6 : r.safeS;     // never back across the start line
     r.d = 0; r.th = 0; r.va = 0; r.v = 6; r.vy = 0; r.air = false;
-    r.y = t.heightAt(r.s);
+    r.y = t.groundAt(r.s, r.d);
     r.progress = r.lapsDone * t.length + r.s;
     r.mode = 'drive'; r.invuln = INVULN_TIME; r.offroad = false;
     r.kv = 0; r.knockT = 0; r.knockedBy = -1;
@@ -458,7 +522,7 @@ export class Race {
       for (let j = i + 1; j < rs.length; j++) {
         const b = rs[j];
         if (b.mode !== 'drive' || b.invuln > 0) continue;
-        const ds = t.deltaS(a.s, b.s), dd = a.d - b.d;
+        const rel = this.separation(b, a), ds = rel.ds, dd = rel.dd;
         if (Math.abs(ds) > 2.8 || Math.abs(dd) > 1.8 || Math.abs(a.y - b.y) > 1.5) continue;
         // Ease ships apart over a few steps instead of snapping them sideways in one.
         const push = Math.min(0.11, (1.8 - Math.abs(dd)) * 0.5 + 0.02);
@@ -476,9 +540,9 @@ export class Race {
   // alpha (0..1) blends from the previous step to the current one: the screen redraws on its
   // own clock (60, 90 or 120 times a second), so drawing raw step positions makes ships judder.
   pose(r, out = {}, alpha = 1) {
-    const t = this.track;
+    const t = this.path(r);
     // No blending across a teleport (falling off, respawning) or before the first step.
-    const a = r.pmode === r.mode && r.ps != null ? alpha : 1;
+    const a = r.pmode === r.mode && r.proute === r.route && r.ps != null ? alpha : 1;
     if (r.mode === 'fall' || r.mode === 'dead') {
       const spin = r.pspin + (r.spin - r.pspin) * a;
       out.x = r.pwx + (r.wx - r.pwx) * a; out.y = r.pwy + (r.wy - r.pwy) * a; out.z = r.pwz + (r.wz - r.pwz) * a;
@@ -494,11 +558,12 @@ export class Race {
     const w = t.toWorld(s, d, out);
     const bank = t.bankAt(s);
     out.s = s; out.d = d; out.th = th; out.steer = steer;
-    out.ground = w.y;                       // trail surface height under the ship
-    out.y = y - d * Math.sin(bank);
+    out.ground = t.groundAt(s, d);                       // trail surface height under the ship
+    out.y = Math.max(y, out.ground);
     out.heading = w.psi + th;
     out.psi = w.psi;
-    const slope = (t.heightAt(s + 1.2) - t.heightAt(s - 1.2)) / 2.4;
+    const ds = 1.2 * t.speedScale(s);
+    const slope = (t.groundAt(s + ds, d) - t.groundAt(s - ds, d)) / 2.4;
     out.pitch = r.air ? Math.atan2(r.vy, Math.max(8, r.v)) * 0.7 : Math.atan(slope);
     out.roll = (r.air ? 0 : bank) + steer * 0.32;
     if (r.knockT > 0) out.roll += Math.sin(r.knockT * 22) * 0.55 * r.knockT;   // wobble while reeling from a shove

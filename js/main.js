@@ -10,7 +10,7 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-12.1';
+const BUILD = '2026-11-12.2';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -88,14 +88,15 @@ function makeHud(view, racer) {
   el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
   el.innerHTML = `<div class="flash"></div>
     <div class="place"></div><div class="eggs"></div><div class="kos"></div><div class="lap"></div><canvas class="map" width="150" height="150"></canvas>
+    <div class="driving"><b class="speed"></b><span class="driftState"></span><meter min="0" max="1" value="0" aria-label="Boost charge"></meter><small class="routeLabel"></small></div>
     <div class="msg"></div><button class="pauseBtn" aria-label="Pause">❚❚</button>
     <div class="tiltDot"><i></i></div>
     <div class="touch l"><button data-touch="left" aria-label="Steer left">◀</button><button data-touch="right" aria-label="Steer right">▶</button></div>
-    <div class="touch r">${racer.autoGo ? '' : '<button class="go" data-touch="go">GO</button>'}<button class="brake" data-touch="brake">BRAKE</button><button class="bash" data-touch="bash">BASH</button></div>`;
+    <div class="touch r">${racer.autoGo ? '' : '<button class="go" data-touch="go">GO</button>'}<button class="brake" data-touch="brake">BRAKE</button><button class="drift" data-touch="drift">DRIFT</button><button class="turbo" data-touch="boost">BOOST</button><button class="bash" data-touch="bash">BASH</button></div>`;
   $('huds').appendChild(el);
   const q = s => el.querySelector(s);
   const hud = { el, view, racer, place: q('.place'), lap: q('.lap'), map: q('.map'), msg: q('.msg'), flash: q('.flash'), tiltDot: q('.tiltDot i'), pad: new TouchPad(el), lastPlace: '', lastLap: '', wasAir: false,
-    kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null, eggs: q('.eggs'), lastEggs: null };
+    speed: q('.speed'), driftState: q('.driftState'), charge: q('meter'), boostBtn: q('.turbo'), routeLabel: q('.routeLabel'), kos: q('.kos'), bashBtn: q('.bash'), lastKos: -1, gotBy: null, eggs: q('.eggs'), lastEggs: null };
   q('.pauseBtn').addEventListener('click', () => pause());
   return hud;
 }
@@ -109,14 +110,20 @@ const fmtTime = t => { const m = Math.floor(t / 60), s = t - m * 60; return m + 
 
 // The course picker and in-race minimap share the same route outline.
 function makeMap(track) {
-  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
-  for (let i = 0; i < track.N; i++) { x0 = Math.min(x0, track.X[i]); x1 = Math.max(x1, track.X[i]); z0 = Math.min(z0, track.Z[i]); z1 = Math.max(z1, track.Z[i]); }
-  const k = 126 / Math.max(x1 - x0, z1 - z0);
-  const ox = 75 - (x0 + x1) / 2 * k, oz = 75 - (z0 + z1) / 2 * k;
-  const points = [];
-  for (let i = 0; i < track.N; i += 4) points.push(`${(track.X[i] * k + ox).toFixed(2)},${(track.Z[i] * k + oz).toFixed(2)}`);
-  const outline = 'M ' + points.join(' L ') + ' Z';
-  return { k, ox, oz, path: new Path2D(outline), outline, startX: track.X[0] * k + ox, startY: track.Z[0] * k + oz };
+  const visible = track.branches.filter(b => !b.hidden).map(b => b.geometry);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const path of [track, ...visible]) for (let i = 0; i < path.N; i++) {
+    x0 = Math.min(x0, path.X[i]); x1 = Math.max(x1, path.X[i]); z0 = Math.min(z0, path.Z[i]); z1 = Math.max(z1, path.Z[i]);
+  }
+  const k = 126 / Math.max(x1 - x0, z1 - z0), ox = 75 - (x0 + x1) / 2 * k, oz = 75 - (z0 + z1) / 2 * k;
+  const line = path => {
+    const points = [];
+    for (let i = 0; i < path.N; i += 3) points.push(`${(path.X[i] * k + ox).toFixed(2)},${(path.Z[i] * k + oz).toFixed(2)}`);
+    if (path.open) points.push(`${(path.X.at(-1) * k + ox).toFixed(2)},${(path.Z.at(-1) * k + oz).toFixed(2)}`);
+    return 'M ' + points.join(' L ') + (path.open ? '' : ' Z');
+  };
+  const outline = line(track), alternates = visible.map(line);
+  return { k, ox, oz, path: new Path2D(outline), alternates, branches: new Path2D(alternates.join(' ')), outline, startX: track.X[0] * k + ox, startY: track.Z[0] * k + oz };
 }
 const MAPS = new Map(tracks.map(t => [t.course.id, makeMap(t)]));
 let MAP = MAPS.get(track.course.id);
@@ -126,10 +133,11 @@ function drawMap(hud, race) {
   c.lineJoin = 'round';
   c.strokeStyle = 'rgba(0,0,0,.55)'; c.lineWidth = 9; c.stroke(MAP.path);
   c.strokeStyle = '#f4e3c0'; c.lineWidth = 5; c.stroke(MAP.path);
+  c.strokeStyle = '#65efce'; c.lineWidth = 3; c.setLineDash([4, 3]); c.stroke(MAP.branches); c.setLineDash([]);
   const w = {};
   for (const pass of [0, 1]) for (const r of race.racers) {
     const me = r === hud.racer; if ((pass === 1) !== me || r.mode === 'dead') continue;
-    if (r.mode === 'fall') { w.x = r.wx; w.z = r.wz; } else track.toWorld(r.s, r.d, w);
+    if (r.mode === 'fall') { w.x = r.wx; w.z = r.wz; } else race.path(r).toWorld(r.s, r.d, w);
     c.beginPath(); c.arc(w.x * MAP.k + MAP.ox, w.z * MAP.k + MAP.oz, me ? 6.5 : 4, 0, 7);
     c.fillStyle = characterById(r.character).ship; c.fill();
     c.lineWidth = me ? 2.5 : 1.2; c.strokeStyle = me ? '#fff' : 'rgba(0,0,0,.7)'; c.stroke();
@@ -144,6 +152,13 @@ function updateHud(hud, race) {
   const txt = lap + time;
   if (txt !== hud.lastLap) { hud.lastLap = txt; hud.lap.innerHTML = `${lap}<small>${time}</small>`; }
   hud.flash.classList.toggle('on', r.boostT > 0);
+  hud.speed.textContent = Math.round(r.v * 3.6) + ' km/h';
+  hud.charge.value = r.boostCharge;
+  hud.driftState.textContent = r.boostT > 0 ? 'BOOSTING!' : r.drifting ? 'DRIFT → CHARGE' : r.boostCharge >= 0.25 ? 'BOOST READY · B / Y' : 'DRIFT TO CHARGE';
+  hud.el.classList.toggle('drifting', r.drifting);
+  hud.boostBtn.classList.toggle('empty', r.boostCharge < 0.25);
+  hud.boostBtn.setAttribute('aria-disabled', String(r.boostCharge < 0.25));
+  hud.routeLabel.textContent = r.route ? race.path(r).name : track.name;
   if (r.kos !== hud.lastKos) { hud.lastKos = r.kos; hud.kos.textContent = r.kos ? '💥 × ' + r.kos : ''; }
   // rescued eggs on board, shown as a row of little eggs in their own colours
   const eggKey = r.eggs.join('');
@@ -187,6 +202,7 @@ function handleEvent(e, race) {
       break;
     case 'eggdrop': sound.eggDrop(); hud.dropped = e.n; break;
     case 'bash': sound.bash(e.power); break;
+    case 'route': say(hud, e.hidden ? 'SECRET PATH!' : e.name, e.hidden ? 'gold' : '', 1.3); break;
     case 'knocked': sound.knocked(); say(hud, 'WHOA!', 'red', 0.7); break;
     case 'knockout': sound.knockout(); say(hud, 'KNOCKOUT!', 'gold', 1.2); break;
     case 'fall': sound.fall(); hud.gotBy = e.by >= 0 ? race.racers[e.by].name : null; break;
@@ -392,7 +408,7 @@ function cycleCourse(dir) {
 }
 $('courses').innerHTML = COURSES.map(c => {
   const m = MAPS.get(c.id);
-  return `<button class="course" data-course="${c.id}" style="--c:${c.color}" aria-pressed="false"><svg viewBox="0 0 150 150" aria-hidden="true"><path d="${m.outline}"></path><circle cx="${m.startX}" cy="${m.startY}" r="5"></circle></svg><span><b>${c.name}</b><small>${c.difficulty} · ${c.laps} laps</small></span></button>`;
+  return `<button class="course" data-course="${c.id}" style="--c:${c.color}" aria-pressed="false"><svg viewBox="0 0 150 150" aria-hidden="true"><path d="${m.outline}"></path>${m.alternates.map(d => `<path class="alternate" d="${d}"></path>`).join('')}<circle cx="${m.startX}" cy="${m.startY}" r="5"></circle></svg><span><b>${c.name}</b><small>${c.difficulty} · ${c.laps} laps</small></span></button>`;
 }).join('');
 $('courses').addEventListener('click', e => {
   const b = e.target.closest('[data-course]'); if (!b) return;

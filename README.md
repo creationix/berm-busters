@@ -11,9 +11,15 @@ Pick a track in race setup. Each card shows its route, difficulty and lap count;
 | Track | Difficulty | Laps | What to expect |
 | --- | --- | --- | --- |
 | Fossil Flats | Medium | 3 | The original creek loop, bluff ledge and gorge bridge |
-| Creekside Cruise | Easy | 3 | A short, wide loop with gentle rollers and small jumps |
-| Pine Hollow | Medium | 3 | Winding forest bends, a wooded ridge and a little gorge |
-| Bluff Run | Hard | 2 | High ledges, two narrow bridges and bigger jumps |
+| Creekside Cruise | Easy | 3 | Gentle turns with an optional boosted creek loop |
+| Pine Hollow | Medium | 3 | A figure eight with a high overpass and an optional forest loop |
+| Bluff Run | Hard | 2 | High ledges and narrow bridges, with a safer lower pass |
+
+Steer toward a fork to take an optional path, then rejoin the race automatically. Dotted lines in the course picker and minimap show public alternate routes. Narrow, unmarked shortcuts reward exploration with golden eggs and do not appear on the map. Branches have their own physical lengths; shorter cuts save time while keeping lap counts and race positions consistent. AI rivals sometimes choose alternate routes too.
+
+**Drift and boost:** hold **Shift** (or either gamepad bumper, or the touch DRIFT button) while turning at speed. The ship slides with less grip, throws sparks and charges the boost meter. Press **B/F**, gamepad **Y**, or **BOOST** to spend the reserve on a burst of speed. You start with a small reserve; clean landings and boost pads also add charge. The HUD shows charge and speed. Gamepad **X** remains egg bash.
+
+The banked road, off-road terrain, and simulation now share one ground surface. Driving off the inside of a turn follows the hillside, and the camera stays above it. Elevated crossings keep their separate heights.
 
 Each press of **BASH** explodes the best egg in your on-board inventory. There is no cooldown: collect eggs for more blasts, or save them to hatch at the finish. Better eggs increase blast reach and knockback: Trail < Sky < Cliff < Golden. The outlined egg in the HUD is the next one to explode.
 

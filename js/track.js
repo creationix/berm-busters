@@ -5,6 +5,8 @@
 // resampled every metre. Hills, ramps and rollers are added to the height profile,
 // so anything that drives the profile can leave the ground at a crest or a ramp lip.
 
+import { createTerrain } from './terrain.js';
+
 export const EDGE = { FOREST: 0, WALL: 1, CLIFF: 2 };
 export const SURF = { DIRT: 0, WOOD: 1, ROCK: 2 };
 
@@ -17,16 +19,17 @@ function catmull(p0, p1, p2, p3, t) {
 }
 
 export function buildTrack(course) {
+  const open = !!course.open;
   const sc = course.scale || 1;
   const pts = course.points.map(p => ({ x: p.x * sc, z: p.z * sc, y: p.y || 0, w: p.w || course.halfWidth || 5.5 }));
   const n = pts.length;
-  const P = i => pts[((i % n) + n) % n];
+  const P = i => pts[open ? clamp(i, 0, n - 1) : ((i % n) + n) % n];
 
   // 1. Dense polyline with running length, remembering the control-point parameter u.
   const dense = [];
   const SUB = 48;
   let len = 0, prev = null;
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < (open ? n - 1 : n); i++) {
     for (let j = 0; j < SUB; j++) {
       const t = j / SUB;
       const q = {
@@ -40,12 +43,13 @@ export function buildTrack(course) {
       q.len = len; dense.push(q); prev = q;
     }
   }
-  const total = len + Math.hypot(dense[0].x - prev.x, dense[0].z - prev.z);
-  dense.push({ ...dense[0], u: n, len: total });
+  const last = open ? pts[n - 1] : dense[0];
+  const total = len + Math.hypot(last.x - prev.x, last.z - prev.z);
+  dense.push({ ...last, u: open ? n - 1 : n, len: total });
 
   // 2. Resample every metre.
-  const N = Math.round(total);
-  const step = total / N;
+  const N = Math.max(3, Math.round(total) + (open ? 1 : 0));
+  const step = total / (open ? N - 1 : N);
   const X = new Float32Array(N), Z = new Float32Array(N), baseY = new Float32Array(N), HW = new Float32Array(N), U = new Float32Array(N);
   let k = 0;
   for (let i = 0; i < N; i++) {
@@ -56,7 +60,7 @@ export function buildTrack(course) {
     X[i] = a.x + (b.x - a.x) * f; Z[i] = a.z + (b.z - a.z) * f;
     baseY[i] = a.y + (b.y - a.y) * f; HW[i] = a.w + (b.w - a.w) * f; U[i] = a.u + (b.u - a.u) * f;
   }
-  const wrap = i => ((i % N) + N) % N;
+  const wrap = i => open ? clamp(i, 0, N - 1) : ((i % N) + N) % N;
 
   // 3. Direction, curvature and banking.
   const PSI = new Float32Array(N), KAPPA = new Float32Array(N), BANK = new Float32Array(N);
@@ -75,7 +79,7 @@ export function buildTrack(course) {
 
   // Convert a control-point position (e.g. 4.5 = halfway between points 4 and 5) to metres along the trail.
   function sOfU(u) {
-    u = ((u % n) + n) % n;
+    u = open ? clamp(u, 0, n - 1) : ((u % n) + n) % n;
     let lo = 0, hi = N - 1;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (U[mid] <= u) lo = mid; else hi = mid - 1; }
     return lo * step;
@@ -132,11 +136,11 @@ export function buildTrack(course) {
     return a + (b - a) * f;
   };
   const track = {
-    course, name: course.name, laps: course.laps || 3,
+    course, name: course.name, laps: course.laps || 3, open,
     length: total, N, step,
     X, Z, Y, baseY, HW, PSI, KAPPA, BANK, SURFACE, EDGE_L, EDGE_R, FEAT,
     boosts, ramps,
-    wrapS: s => ((s % total) + total) % total,
+    wrapS: s => open ? clamp(s, 0, total) : ((s % total) + total) % total,
     index: s => wrap(Math.floor(s / step)),
     sOfU,
     heightAt: s => lerpArr(Y, s),
@@ -169,6 +173,30 @@ export function buildTrack(course) {
       }
       return false;
     },
+  };
+  track.speedScale = () => 1;
+  track.branches = [];
+  for (const b of course.branches || []) {
+    const fromS = sOfU(b.from), toS = sOfU(b.to);
+    if (!(toS > fromS && toS < total - 35)) throw new Error(`Invalid branch ${b.id}`);
+    const point = s => { const w = track.toWorld(s, 0); return { x: w.x, z: w.z, y: w.y, w: track.halfWidthAt(s) }; };
+    const geometry = buildTrack({ open: true, hidden: !!b.hidden, name: b.name, halfWidth: b.halfWidth || 3.5,
+      points: [point(fromS), point(fromS + 10), ...b.points.map(p => ({ ...p, x: p.x * sc, z: p.z * sc })), point(toS - 10), point(toS)],
+      features: b.features || [], edges: b.edges || [] });
+    const scale = (toS - fromS) / geometry.length, local = s => clamp((s - fromS) / scale, 0, geometry.length);
+    const path = { ...track, branches: [], geometry, ...b, fromS, toS, scale, length: total,
+      toWorld: (s, d, out) => geometry.toWorld(local(s), d, out), speedScale: () => scale };
+    for (const key of ['heightAt', 'baseHeightAt', 'kappaAt', 'bankAt', 'halfWidthAt', 'psiAt']) path[key] = s => geometry[key](local(s));
+    path.edgeAt = (s, side) => geometry.edgeAt(local(s), side);
+    path.boostAt = (s, d) => geometry.boostAt(local(s), d);
+    track.branches.push(path);
+  }
+  track.path = id => track.branches.find(b => b.id === id) || track;
+  let terrain;
+  track.getTerrain = () => terrain || (terrain = createTerrain(track));
+  for (const path of [track, ...track.branches]) path.groundAt = (s, d) => {
+    const w = path.toWorld(s, d), land = track.getTerrain().heightAt(w.x, w.z);
+    return Math.abs(d) <= path.halfWidthAt(s) ? Math.max(w.y, land) : land;
   };
   return track;
 }
