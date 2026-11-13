@@ -88,14 +88,13 @@ function canvasTexture(w, h, draw) {
 
 export class World {
   constructor(canvas, track) {
-    this.canvas = canvas; this.track = track; this.course = track.course;
+    this.canvas = canvas; this.track = null; this.course = null;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     this.pixelRatio = this.maxPixelRatio;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.scene = new THREE.Scene();
-    const sky = this.course.sky;
-    this.scene.fog = new THREE.Fog(new THREE.Color(sky.horizon), 110, 520);
+    this.courseRoot = new THREE.Group(); this.scene.add(this.courseRoot);
     this.racers = []; this.time = 0; this.leafT = 0;
     this._n = { i: 0, dist: 0, lat: 0 };
     this._pose = {}; this._v = new THREE.Vector3();
@@ -104,12 +103,6 @@ export class World {
     const sun = new THREE.DirectionalLight('#fff0cf', 2.6);
     sun.position.set(-0.5, 0.8, 0.35);
     this.scene.add(sun);
-
-    this.buildSky();
-    this.buildTerrain();
-    this.buildTrail();
-    this.buildProps();
-    this.buildScenery();
 
     this.fx = new Particles(1400, true);      // glows, sparks, thrusters
     this.bits = new Particles(900, false);    // dust, smoke, leaves, confetti
@@ -138,6 +131,32 @@ export class World {
     this.beamMesh.setColorAt(0, EGG_COLORS[0]);
     this.scene.add(this.beamMesh);
     this._em = new THREE.Matrix4(); this._eq = new THREE.Quaternion(); this._ep = new THREE.Vector3(); this._es = new THREE.Vector3(); this._ee = new THREE.Euler(); this._ew = {};
+    this.setTrack(track);
+  }
+
+  // Keep one renderer when changing courses, releasing the old scenery's GPU resources.
+  setTrack(track) {
+    if (this.track === track) return;
+    this.clearRacers();
+    const geometries = new Set(), materials = new Set(), textures = new Set();
+    this.courseRoot.traverse(o => {
+      if (o.geometry) geometries.add(o.geometry);
+      if (o.material) for (const m of Array.isArray(o.material) ? o.material : [o.material]) materials.add(m);
+      if (o.isInstancedMesh) o.dispose();
+    });
+    for (const m of materials) { for (const v of Object.values(m)) if (v && v.isTexture) textures.add(v); m.dispose(); }
+    for (const g of geometries) g.dispose();
+    for (const t of textures) t.dispose();
+    this.courseRoot.clear();
+    this.track = track; this.course = track.course;
+    this.scene.fog = new THREE.Fog(new THREE.Color(this.course.sky.horizon), 110, 520);
+    this.time = this.leafT = this.trailT = 0; this.leafCam = null;
+    for (const p of [this.fx, this.bits]) {
+      p.life.fill(0); p.size.fill(0); p.col.fill(0); p.cursor = 0;
+      p.points.geometry.attributes.size.needsUpdate = p.points.geometry.attributes.pcolor.needsUpdate = true;
+    }
+    this.eggMesh.count = this.beamMesh.count = 0;
+    this.buildSky(); this.buildTerrain(); this.buildTrail(); this.buildProps(); this.buildScenery();
   }
 
   // Places every egg for this frame: bobbing on the trail, or trailing behind the ship that rescued it.
@@ -222,7 +241,7 @@ export class World {
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.sky = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.sky.renderOrder = -10; this.sky.frustumCulled = false;
-    this.scene.add(this.sky);
+    this.courseRoot.add(this.sky);
     // sun glow
     const sunTex = canvasTexture(128, 128, x => {
       const gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -302,11 +321,11 @@ export class World {
     g.computeVertexNormals();
     const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
     mesh.frustumCulled = false;
-    this.scene.add(mesh);
+    this.courseRoot.add(mesh);
     // water
     const water = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshLambertMaterial({ color: '#3fa7d6', transparent: true, opacity: 0.82 }));
     water.rotation.x = -Math.PI / 2; water.position.set((x0 + x1) / 2, WATER_Y, (z0 + z1) / 2);
-    this.scene.add(water);
+    this.courseRoot.add(water);
   }
 
   gridHeight(x, z) {
@@ -377,8 +396,8 @@ export class World {
     g.computeVertexNormals();
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(g, mat); mesh.frustumCulled = false;
-    this.scene.add(mesh);
-    if (post.pos.length) { const pm = new THREE.Mesh(post.build(), mat); pm.frustumCulled = false; this.scene.add(pm); }
+    this.courseRoot.add(mesh);
+    if (post.pos.length) { const pm = new THREE.Mesh(post.build(), mat); pm.frustumCulled = false; this.courseRoot.add(pm); }
 
     // boost pads: animated chevrons lying on the trail
     this.boostTex = canvasTexture(64, 64, (x) => {
@@ -402,7 +421,7 @@ export class World {
     bg.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
     bg.setAttribute('uv', new THREE.Float32BufferAttribute(buv, 2));
     const bm = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ map: this.boostTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-    bm.frustumCulled = false; this.scene.add(bm);
+    bm.frustumCulled = false; this.courseRoot.add(bm);
   }
 
   buildProps() {
@@ -433,7 +452,7 @@ export class World {
       }
     }
     const mesh = new THREE.Mesh(b.build(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
-    mesh.frustumCulled = false; this.scene.add(mesh);
+    mesh.frustumCulled = false; this.courseRoot.add(mesh);
     // banner
     const name = this.course.name.toUpperCase();
     const tex = canvasTexture(1024, 160, (x, w, h) => {
@@ -448,7 +467,7 @@ export class World {
     const banner = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2 + 1.4, (hw * 2 + 1.4) * 160 / 1024), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
     this.trailPoint(0, 0, 6.3, v);
     banner.position.copy(v); banner.rotation.y = -psi - Math.PI / 2;
-    this.scene.add(banner);
+    this.courseRoot.add(banner);
   }
 
   buildScenery() {
@@ -479,7 +498,7 @@ export class World {
     const add = (geo, mat, list, fn) => {
       const im = new THREE.InstancedMesh(geo, mat, list.length);
       list.forEach((o, i) => { fn(o); im.setMatrixAt(i, m.compose(p, q, s)); im.setColorAt(i, col); });
-      im.frustumCulled = false; this.scene.add(im); return im;
+      im.frustumCulled = false; this.courseRoot.add(im); return im;
     };
     const trunk = new THREE.CylinderGeometry(0.2, 0.32, 1, 5); trunk.translate(0, 0.5, 0);
     add(trunk, lam(), trees, o => { p.set(o.x, o.h - 0.3, o.z); q.identity(); s.set(o.s, 3.4 * o.s, o.s); col.set('#5d4332'); });
@@ -499,7 +518,14 @@ export class World {
 
   // ---------- racers ----------
   clearRacers() {
-    for (const v of this.racers) { if (!v) continue; this.scene.remove(v.group, v.shadow); v.mesh.geometry.dispose(); if (v.pal) v.pal.geometry.dispose(); }
+    for (const v of this.racers) {
+      if (!v) continue;
+      this.scene.remove(v.group, v.shadow);
+      for (const root of [v.group, v.shadow]) root.traverse(o => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material && o.material !== this.racerMat) o.material.dispose();
+      });
+    }
     this.racers = [];
   }
   // buddy: an optional hatchling (from critters.js) who rides along on the side pod.

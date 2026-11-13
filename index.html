@@ -64,8 +64,18 @@
   #setup .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 1.6vmin; }
   #setup .head h2 { margin: 0; }
   #setup .head .btn.big { padding: 10px 34px; }
+  .courses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
+  .course { display: flex; align-items: center; gap: 6px; text-align: left; padding: 6px; border: 2px solid transparent; border-radius: 14px; background: #1d4638; min-width: 0; }
+  .course svg { width: clamp(38px, 9vmin, 66px); flex: none; }
+  .course path { fill: none; stroke: var(--c); stroke-width: 7; stroke-linejoin: round; }
+  .course circle { fill: #fff; }
+  .course b { display: block; font-size: clamp(11px, 2vmin, 14px); }
+  .course small { display: block; color: var(--dim); font-size: 11px; }
+  .course.on { border-color: var(--c); background: #2c5a4b; }
+  .course:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  #courseInfo { text-align: left; margin: 0 0 12px; font-size: 12px; color: var(--dim); max-width: 780px; }
   #setup .cols { display: grid; grid-template-columns: auto auto; gap: clamp(10px, 2.5vmin, 24px); justify-content: center; align-items: start; }
-  @media (max-aspect-ratio: 1/1) { #setup .cols { grid-template-columns: auto; } }
+  @media (max-aspect-ratio: 1/1) { #setup .cols { grid-template-columns: auto; } .courses { grid-template-columns: repeat(2, 1fr); } }
   @media (max-height: 480px) {
     #setup .opt small, #setup .rider i { display: none; }
     #setup .seg button { min-height: 34px; padding: 6px 10px; }
@@ -187,7 +197,9 @@
 
   <div id="setup" class="screen">
     <div class="panel">
-      <div class="head"><button id="backBtn" class="btn alt">Back</button><h2>Pick your rider</h2><button id="goBtn" class="btn big">GO!</button></div>
+      <div class="head"><button id="backBtn" class="btn alt">Back</button><h2>Pick your race</h2><button id="goBtn" class="btn big">GO!</button></div>
+      <div id="courses" class="courses" role="group" aria-label="Track"></div>
+      <p id="courseInfo" aria-live="polite"></p>
       <div class="cols">
         <div id="riders"></div>
         <div id="opts">
@@ -196,7 +208,7 @@
           <div class="opt"><span>Steering help</span><div class="seg" data-key="assist"><button data-v="lots">Lots</button><button data-v="some">Some</button><button data-v="off">Off</button></div></div>
           <div class="opt"><span>Auto-go<small>The ship speeds up by itself</small></span><div class="seg" data-key="autoGo"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
           <div class="opt"><span>Rivals</span><div class="seg" data-key="rivals"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div></div>
-          <div class="tip">Each BASH explodes your best egg to shove rivals sideways. Better eggs make bigger, stronger blasts! Collect eggs, then press <b>Space</b>, gamepad <b>X</b>, or BASH. One egg per press; no cooldown.</div>
+          <div class="tip">Each BASH explodes your best egg to shove rivals sideways. Better eggs make bigger, stronger blasts! Press <b>Space</b>, gamepad <b>X</b>, or BASH. One egg per press; no cooldown. In setup, <b>↑/↓</b> picks a track and <b>←/→</b> picks a rider (keyboard or gamepad).</div>
           <div id="setupNote" style="font-size:12.5px;color:var(--gold);min-height:1.2em"></div>
         </div>
       </div>

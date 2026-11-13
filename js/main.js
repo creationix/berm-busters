@@ -1,7 +1,7 @@
 // Berm Busters: menus, the game loop and the in-race display.
 
 import { buildTrack } from './track.js';
-import { FOSSIL_FLATS } from './courses.js';
+import { COURSES } from './courses.js';
 import { Race, TICK, V_MAX, ASSIST, EGG, MAX_EGGS } from './sim.js';
 import { World } from './render.js';
 import { CHARACTERS, characterById } from './models.js';
@@ -10,20 +10,22 @@ import { Keyboard, TouchPad, PlayerInput, listGamepads, readGamepad } from './in
 import { Tilt } from './tilt.js';
 import { Sound } from './audio.js';
 
-const BUILD = '2026-11-11.1';
+const BUILD = '2026-11-12.1';
 const LS = 'berm-busters-';            // other games share this origin: keep every saved key under this prefix
 const $ = id => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ---------- settings ----------
-const DEFAULTS = { character: 'fox', steer: 'buttons', daredevil: 'off', assist: 'some', autoGo: 'on', rivals: 'easy', sfx: true, music: true };
+const DEFAULTS = { course: 'fossil-flats', character: 'fox', steer: 'buttons', daredevil: 'off', assist: 'some', autoGo: 'on', rivals: 'easy', sfx: true, music: true };
 const settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(localStorage.getItem(LS + 'settings') || '{}')); } catch (e) {}
 const save = () => { try { localStorage.setItem(LS + 'settings', JSON.stringify(settings)); } catch (e) {} };
 const RIVALS = { easy: [0.8, 0.016], normal: [0.86, 0.016], fast: [0.92, 0.015] };
 
 // ---------- world ----------
-const track = buildTrack(FOSSIL_FLATS);
+const tracks = COURSES.map(buildTrack);
+let track = tracks.find(t => t.course.id === settings.course) || tracks[0];
+settings.course = track.course.id;
 const world = new World($('view'), track);
 const sound = new Sound();
 const keyboard = new Keyboard();
@@ -51,6 +53,7 @@ function attract() {
 }
 
 function startRace() {
+  selectCourse(settings.course);
   const [base, stepUp] = RIVALS[settings.rivals] || RIVALS.easy;
   const others = CHARACTERS.filter(c => c.id !== settings.character);
   const me = characterById(settings.character);
@@ -104,17 +107,19 @@ function say(hud, text, cls = '', dur = 1.1) {
 const ORD = n => ['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)];
 const fmtTime = t => { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); };
 
-// minimap: the trail outline scaled to fit a 150 px square
-const MAP = (() => {
+// The course picker and in-race minimap share the same route outline.
+function makeMap(track) {
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
   for (let i = 0; i < track.N; i++) { x0 = Math.min(x0, track.X[i]); x1 = Math.max(x1, track.X[i]); z0 = Math.min(z0, track.Z[i]); z1 = Math.max(z1, track.Z[i]); }
   const k = 126 / Math.max(x1 - x0, z1 - z0);
   const ox = 75 - (x0 + x1) / 2 * k, oz = 75 - (z0 + z1) / 2 * k;
-  const path = new Path2D();
-  for (let i = 0; i <= track.N; i += 4) { const j = i % track.N; if (i) path.lineTo(track.X[j] * k + ox, track.Z[j] * k + oz); else path.moveTo(track.X[j] * k + ox, track.Z[j] * k + oz); }
-  path.closePath();
-  return { k, ox, oz, path };
-})();
+  const points = [];
+  for (let i = 0; i < track.N; i += 4) points.push(`${(track.X[i] * k + ox).toFixed(2)},${(track.Z[i] * k + oz).toFixed(2)}`);
+  const outline = 'M ' + points.join(' L ') + ' Z';
+  return { k, ox, oz, path: new Path2D(outline), outline, startX: track.X[0] * k + ox, startY: track.Z[0] * k + oz };
+}
+const MAPS = new Map(tracks.map(t => [t.course.id, makeMap(t)]));
+let MAP = MAPS.get(track.course.id);
 function drawMap(hud, race) {
   const c = hud.map.getContext('2d');
   c.clearRect(0, 0, 150, 150);
@@ -282,6 +287,7 @@ function showResults() {
   if (me.place === 1) eggs.push(EGG.GOLD); else if (me.place <= 3) eggs.push(EGG.AIR);
   const carried = eggs.length - (me.place <= 3 ? 2 : 1);
   bits.unshift(`You rescued ${carried} egg${carried === 1 ? '' : 's'}`);
+  bits.unshift(track.name);
   $('resultsNote').textContent = bits.join(' · ');
   // Decide the hatchlings and save them now, so they are safe even if the hatching screen is skipped.
   G.pendingHatch = eggs.map(t => { const h = hatch(t); return Object.assign(h, addToDen(den, h)); });
@@ -365,7 +371,33 @@ function refreshSetup() {
   for (const el of $('riders').children) el.classList.toggle('on', el.dataset.id === settings.character);
   for (const seg of document.querySelectorAll('.seg')) for (const b of seg.children) b.classList.toggle('on', b.dataset.v === String(settings[seg.dataset.key]));
   $('optSteer').style.display = coarse && Tilt.supported ? '' : 'none';
+  for (const b of $('courses').children) {
+    const selected = b.dataset.course === settings.course;
+    b.classList.toggle('on', selected); b.setAttribute('aria-pressed', String(selected));
+  }
+  $('courseInfo').textContent = `${track.name} · ${(track.length / 1000).toFixed(2)} km per lap · ${track.laps} laps — ${track.course.blurb}`;
 }
+function selectCourse(id) {
+  const next = tracks.find(t => t.course.id === id);
+  if (!next || next === track) return;
+  settings.course = id; save();
+  track = next; MAP = MAPS.get(id);
+  world.setTrack(track);
+  attract(); refreshSetup();
+}
+function cycleCourse(dir) {
+  if (G.screen !== 'setup') return;
+  const i = tracks.indexOf(track);
+  selectCourse(tracks[(i + dir + tracks.length) % tracks.length].course.id); sound.click();
+}
+$('courses').innerHTML = COURSES.map(c => {
+  const m = MAPS.get(c.id);
+  return `<button class="course" data-course="${c.id}" style="--c:${c.color}" aria-pressed="false"><svg viewBox="0 0 150 150" aria-hidden="true"><path d="${m.outline}"></path><circle cx="${m.startX}" cy="${m.startY}" r="5"></circle></svg><span><b>${c.name}</b><small>${c.difficulty} · ${c.laps} laps</small></span></button>`;
+}).join('');
+$('courses').addEventListener('click', e => {
+  const b = e.target.closest('[data-course]'); if (!b) return;
+  selectCourse(b.dataset.course); sound.click();
+});
 $('riders').innerHTML = CHARACTERS.map(c => `<button class="rider" data-id="${c.id}"><img src="${portraits[c.id]}" alt=""><b>${c.name}</b><i>${c.animal}</i></button>`).join('');
 $('riders').addEventListener('click', e => { const b = e.target.closest('.rider'); if (!b) return; settings.character = b.dataset.id; save(); sound.click(); refreshSetup(); });
 $('opts').addEventListener('click', e => {
@@ -416,19 +448,28 @@ keyboard.onKey = e => {
   else if (e.code === 'Escape' || e.code === 'KeyP') { if (G.mode === 'race') pause(); else if (G.mode === 'paused') resume(); else if (G.screen === 'setup') show('menu'); }
   else if (e.code === 'ArrowLeft' || e.code === 'KeyA') cycleRider(-1);
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') cycleRider(1);
+  else if (e.code === 'ArrowUp' || e.code === 'KeyW') cycleCourse(-1);
+  else if (e.code === 'ArrowDown' || e.code === 'KeyS') cycleCourse(1);
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
 };
-const padHeld = { a: false, start: false, l: false, r: false };
+const padHeld = { a: false, start: false, l: false, r: false, u: false, d: false };
 function menuPads() {
-  let a = false, start = false, l = false, r = false;
-  for (const p of listGamepads()) { const g = readGamepad(p); a = a || (p.buttons[0] && p.buttons[0].pressed); start = start || g.pause; l = l || g.steer < -0.6; r = r || g.steer > 0.6; }
+  let a = false, start = false, l = false, r = false, u = false, d = false;
+  for (const p of listGamepads()) {
+    const g = readGamepad(p); a = a || (p.buttons[0] && p.buttons[0].pressed); start = start || g.pause;
+    l = l || g.steer < -0.6; r = r || g.steer > 0.6;
+    u = u || !!(p.buttons[12] && p.buttons[12].pressed) || p.axes[1] < -0.6;
+    d = d || !!(p.buttons[13] && p.buttons[13].pressed) || p.axes[1] > 0.6;
+  }
   if (G.screen) {
     if ((a && !padHeld.a) || (start && !padHeld.start && G.screen !== 'pause')) { sound.unlock(); advance(); }
     else if (start && !padHeld.start && G.screen === 'pause') resume();
     if (l && !padHeld.l) cycleRider(-1);
     if (r && !padHeld.r) cycleRider(1);
+    if (u && !padHeld.u) cycleCourse(-1);
+    if (d && !padHeld.d) cycleCourse(1);
   }
-  padHeld.a = a; padHeld.start = start; padHeld.l = l; padHeld.r = r;
+  padHeld.a = a; padHeld.start = start; padHeld.l = l; padHeld.r = r; padHeld.u = u; padHeld.d = d;
 }
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
@@ -446,7 +487,7 @@ if ('serviceWorker' in navigator) addEventListener('load', () => navigator.servi
 // Hooks for automated checks: the preview pane throttles animation frames when hidden,
 // so tests step the simulation directly.
 window.__bb = {
-  G, world, track, settings, sound, tilt, keyboard, BUILD, startRace, attract, pause, resume, showResults, show, tick, draw,
+  G, world, get track() { return track; }, settings, sound, tilt, keyboard, BUILD, startRace, attract, pause, resume, showResults, show, tick, draw,
   step(n = 1, input) {
     for (let i = 0; i < n; i++) {
       if (input) { G.race.step([input]); for (const e of G.race.events) handleEvent(e, G.race); } else tick();
